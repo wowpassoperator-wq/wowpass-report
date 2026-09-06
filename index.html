@@ -30,6 +30,8 @@
   .info{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;font-size:13px;margin:8px 0 4px}
   .info dt{color:var(--dim);white-space:nowrap}.info dd{margin:0;word-break:break-all}.info dd b{color:var(--acc)}
   .who{font-size:12px;color:var(--dim)}
+  .explain{background:#1c2a3a;border:1px solid #27406a;border-radius:8px;padding:8px 10px;margin:8px 0 2px;font-size:13px;line-height:1.5}
+  .explain b{color:#9fd0ff}
   /* 이름 게이트 — 세션(이름)이 없으면 먼저 받는다 */
   #gate{position:fixed;inset:0;background:rgba(10,12,16,.92);display:none;place-items:center;z-index:50}
   #gate .box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 28px;width:min(92vw,420px)}
@@ -60,7 +62,8 @@
 <div id="gate"><div class="box">
   <h2>담당자 이름을 알려주세요</h2>
   <p>이 브라우저에 처음 오셨습니다. 여기서 누르는 버튼·적는 사유와 답에 이름이 남습니다 (AI 가 "누가 알려줬는지" 를 기록합니다).</p>
-  <input id="gateName" type="text" placeholder="예: 홍길동" autocomplete="off">
+  <input id="gateName" type="text" placeholder="이름 (예: 홍길동)" autocomplete="off">
+  <select id="gatePc" style="width:100%;margin-bottom:10px"><option value="">내 PC (선택 — 현황에 이름을 붙이려면 골라주세요)</option></select>
   <button class="ok" id="gateOk">시작하기</button>
 </div></div>
 <script>
@@ -91,20 +94,53 @@ const WHO = {"주소주문자오류":"주문자","주문자오류":"주문자"};
 // 사람이 사유를 달아도 학습이 안 되는 분류 (hub_shipper.NOT_LEARNABLE 와 같게) — 사유 입력 목록에서 뺀다
 const NOT_LEARNABLE = new Set(["매장영업시간","앱진입","인프라(폰/adb)","결제버튼못찾음","금액가드","매장문맥","코드오류"]);
 const PARTIAL = r => String(r.category||"").startsWith("음료단품없음(부분");   // 치킨은 넣었고 음료만 담당자 몫
-const STATE_KO = {human_needed:"파킹 — 직접 주문", store_cancelled:"매장 취소", ai_failed:"AI 재시도 중", ai_success:"AI 완주", human_done:"담당자 완료", human_failed:"담당자 실패", mapped:"매핑됨", cancelled:"취소됨"};
+const STATE_KO = {human_needed:"파킹 — 직접 주문", store_cancelled:"매장 취소", ai_failed:"AI 실패", ai_success:"AI 완주", human_done:"담당자 완료", human_failed:"담당자 실패", mapped:"매핑됨", cancelled:"취소됨"};
 
-let rows=[], qs=[], tab="todo";
+let rows=[], qs=[], tab="todo", viewDay="";        // viewDay: 현황 탭에서 보는 날짜 (빈값=오늘)
 let loadedOnce=false, lastOkAt=null, lastErr=null, seq=0, ctrl=null, composing=false, lastSnap="";
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const enc=encodeURIComponent;
 // 담당자 이름 = 이 브라우저의 세션. 없으면 게이트로 먼저 받는다 (주인님 2026-09-06: 누가 적었는지 알아야 한다)
-let ME="";
-try{ ME=(localStorage.getItem("me")||"").trim(); }catch(e){}
+let ME="", MYPC="", pcs={};                      // pcs: {pc_id: monitor} — PC↔담당자 짝 (허브 pcs 표)
+try{ ME=(localStorage.getItem("me")||"").trim(); MYPC=(localStorage.getItem("mypc")||"").trim(); }catch(e){}
 const me=()=>ME||"담당자";
-function showGate(){ $("#gateName").value=ME; $("#gate").style.display="grid"; setTimeout(()=>$("#gateName").focus(),50); }
-function paintMe(){ $("#meName").textContent=ME||"—"; }
-function commitGate(){ const v=($("#gateName").value||"").trim(); if(v.length<2) return toast("이름을 2자 이상 적어주세요"); ME=v; try{localStorage.setItem("me",ME)}catch(e){} paintMe(); $("#gate").style.display="none"; render(false); }
+function needName(){ if(ME) return true; showGate(); toast("담당자 이름을 먼저 적어주세요"); return false; }
+function setInert(on){ for(const sel of ["main","header","nav"]){ const el=document.querySelector(sel); if(el) el.inert=on; } }
+function showGate(){ $("#gateName").value=ME; const sel=$("#gatePc"); const cur=MYPC;
+  sel.innerHTML='<option value="">내 PC (선택 — 현황에 이름을 붙이려면 골라주세요)</option>'+[...new Set(rows.map(pcOf))].sort().map(p=>`<option value="${esc(p)}" ${p===cur?"selected":""}>${esc(p)}${(pcs[p]||{}).monitor?` — 지금 ${esc(pcs[p].monitor)}`:""}</option>`).join("");
+  $("#gate").style.display="grid"; setInert(true); setTimeout(()=>$("#gateName").focus(),50); }
+function paintMe(){ $("#meName").textContent=(ME||"—")+(MYPC?` @${MYPC}`:""); }
+async function commitGate(){ const v=($("#gateName").value||"").trim(); if(v.length<2) return toast("이름을 2자 이상 적어주세요");
+  ME=v; MYPC=($("#gatePc").value||"").trim(); try{localStorage.setItem("me",ME); localStorage.setItem("mypc",MYPC)}catch(e){}
+  paintMe(); $("#gate").style.display="none"; setInert(false);
+  try{ if("Notification" in window && Notification.permission==="default") Notification.requestPermission(); }catch(e){}
+  if(MYPC){ try{ await fetch(HUB_URL+"/rest/v1/pcs",{method:"POST",headers:{...H,"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify([{pc_id:MYPC,monitor:ME,updated_at:new Date().toISOString()}])}); pcs[MYPC]=Object.assign(pcs[MYPC]||{},{monitor:ME}); }catch(e){ toast("PC 담당자 저장 실패: "+errText(e),true) } }
+  render(false); }
+const whoOf = r => r.human_by || (pcs[pcOf(r)]||{}).monitor || "";
+// ── AI 가 지금 하는 일 (허브 pcs 표: 발송기가 60초마다 갱신) — "지금 할 일"(사람 몫)과 구분해서 보여준다
+function ago(iso){ const t=new Date(iso); if(isNaN(t)) return ""; const m=Math.round((Date.now()-t.getTime())/60000); return m<1?"방금":m+"분째"; }
+function liveStrip(){ const ps=Object.values(pcs); if(!ps.length) return "";
+  const items=ps.map(p=>{ const stale=p.updated_at && (Date.now()-new Date(p.updated_at).getTime())>3*60000;
+    let s; if(stale) s=`<span class="tag fail">연결 끊김</span> ${ago(p.updated_at)} 전 소식`;
+    else if(!p.batch_alive) s=`<span class="tag">배치 꺼짐</span>`;
+    else if(p.current_order) s=`<b>${esc(p.current_order)}</b> ${esc(p.current_brand||"")} · ${esc(p.current_step||"")} · ${ago(p.current_since)}`;
+    else s=`<span class="tag ok">대기 중</span> 다음 주문 준비`;
+    return `<div><span class="muted">🤖 ${esc(p.pc_id)}${p.monitor?` (${esc(p.monitor)})`:""}</span> — ${s}</div>`; });
+  return `<div class="card" style="background:#12161f"><b class="small muted">AI 가 지금 하는 일</b>${items.join("")}</div>`; }
+// ── 새 "직접 주문" 카드가 생기면 알림: 소리 + 브라우저 알림 + 탭 제목 숫자 (주인님 2026-09-06: "실패한 거 띄우는 건 팝업이야?")
+let seenTodo=null, baseTitle=document.title;
+const dirty=new Set();                                   // 사용자가 실제로 손댄 입력 id — 재그리기 때 이것만 복원
+document.addEventListener("input",e=>{ if(e.target&&e.target.id&&document.getElementById("main").contains(e.target)) dirty.add(e.target.id); });
+document.addEventListener("change",e=>{ if(e.target&&e.target.id&&document.getElementById("main").contains(e.target)) dirty.add(e.target.id); });
+function beep(){ try{ const ac=new (window.AudioContext||window.webkitAudioContext)(); const o=ac.createOscillator(), g=ac.createGain(); o.connect(g); g.connect(ac.destination); o.frequency.value=880; g.gain.value=0.15; o.start(); setTimeout(()=>{o.frequency.value=1175},150); setTimeout(()=>{o.stop(); ac.close()},400); }catch(e){} }
+function notifyNew(todo){ const ids=new Set(todo.map(r=>r.order_id)); document.title=(todo.length?`(${todo.length}) `:"")+baseTitle;
+  if(seenTodo===null){ seenTodo=ids; return; }
+  const fresh=todo.filter(r=>!seenTodo.has(r.order_id)); seenTodo=ids; if(!fresh.length) return;
+  beep(); const r=fresh[0]; const msg=`직접 주문 필요 ${fresh.length}건 — ${r.brand} ${r.store||""} · ${r.hotel||""} (${r.order_id})`;
+  toast("🔔 "+msg,true);
+  try{ if("Notification" in window && Notification.permission==="granted") new Notification("배민 리포트 어드민", {body:msg}); }catch(e){} }
+
 let toastTimer=null;
 function toast(m, sticky){ const t=$("#toast"); t.textContent=m; t.className="toast"+(sticky?" err":""); t.style.display="block"; clearTimeout(toastTimer); if(!sticky) toastTimer=setTimeout(()=>t.style.display="none",2500); }
 // 날짜는 전부 이 PC 의 현지(한국) 기준. started_at 은 저널 현지시각(tz 없음 → 브라우저가 현지로 해석), created_at 은 허브 UTC(+00:00 붙음)
@@ -124,15 +160,17 @@ const byId = id => rows.find(r=>r.id===id);
 async function load(force){
   const my=++seq; if(ctrl) ctrl.abort(); ctrl=new AbortController(); const sig=ctrl.signal; const to=setTimeout(()=>ctrl.abort(), TIMEOUT_MS);
   try{
-    const [r1,q1]=await Promise.all([
+    const [r1,q1,p1]=await Promise.all([
       get("order_reports?select=*&created_at=gte."+enc(isoDaysAgo(WINDOW_DAYS))+"&order=id.desc", sig),
-      get("questions?select=*&order=id.desc", sig)]);
+      get("questions?select=*&order=id.desc", sig),
+      get("pcs?select=*", sig).catch(()=>[])]);
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
+    pcs={}; for(const p of p1) if(p.pc_id) pcs[p.pc_id]=p;
     const seen=new Set(); rows=r1.filter(r=>!seen.has(r.id)&&seen.add(r.id)).sort((a,b)=>(tsOf(b)-tsOf(a))||(b.id-a.id));
     qs=q1; loadedOnce=true; lastOkAt=new Date(); lastErr=null;
     $("#hubTag").textContent="허브 연결됨 · 주문 "+rows.length+"("+WINDOW_DAYS+"일) · 질문 "+qs.length+" · "+hhmm(lastOkAt); $("#hubTag").className="tag ok";
-    const pcs=[...new Set(rows.map(pcOf))].sort(); const sel=$("#pcFilter"); const cur=sel.value;
-    sel.innerHTML='<option value="">전체</option>'+pcs.map(p=>`<option value="${esc(p)}" ${p===cur?"selected":""}>${esc(p)}</option>`).join("");
+    const pcList=[...new Set(rows.map(pcOf))].sort(); const sel=$("#pcFilter"); const cur=sel.value;
+    sel.innerHTML='<option value="">전체</option>'+pcList.map(p=>`<option value="${esc(p)}" ${p===cur?"selected":""}>${esc(p)}</option>`).join("");
   }catch(e){ if(my!==seq) return; lastErr=errText(e); $("#hubTag").textContent=lastErr; $("#hubTag").className="tag fail"; }
   finally{ clearTimeout(to); }
   render(!force);
@@ -149,6 +187,7 @@ function counts(){
   // 사유 입력 = 학습이 되는 실패 중 사유 없는 것 (백로그 — 틈날 때)
   const reasons=latest.filter(r=>r.result==="실패"&&!labeled.has(r.order_id)&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&!NOT_LEARNABLE.has(r.category||""));
   $("#nTodo").textContent=todo.length; $("#nReasons").textContent=reasons.length; $("#nQ").textContent=qs.filter(q=>!q.answer).length;
+  if(loadedOnce) notifyNew(todo);
   return {f,today,todo,reasons,latest};
 }
 function render(auto){
@@ -158,27 +197,34 @@ function render(auto){
   // 자동 새로고침은 입력 중(포커스·한글 조합 중)이면 건너뛴다 — 배지·연결표시만 갱신
   const typing=(document.activeElement&&m.contains(document.activeElement))||composing;
   const snap=JSON.stringify([tab,$("#pcFilter").value,lastErr,loadedOnce,rows.length,qs.length,
-    rows.slice(0,600).map(r=>[r.id,r.human_action,r.human_reason_cat,r.learned,r.state]), qs.map(q=>[q.id,!!q.answer,q.applied])]);
+    rows.slice(0,600).map(r=>[r.id,r.human_action,r.human_reason_cat,r.learned,r.state,r.human_note,r.human_by,r.human_at]), qs.map(q=>[q.id,q.answer,q.applied,q.edited_at])]);
   if(auto&&(typing||snap===lastSnap)) return;
   lastSnap=snap;
   // 다시 그려도 입력값은 살린다 (id 기준)
-  const saved=new Map([...m.querySelectorAll("input,textarea,select")].map(el=>[el.id,el.value]));
+  const saved=new Map([...m.querySelectorAll("input,textarea,select")].filter(el=>dirty.has(el.id)).map(el=>[el.id,el.value]));
   let html="";
   if(!loadedOnce){ m.innerHTML=`<div class="banner"><b>허브에 연결하지 못했습니다</b> — ${esc(lastErr||"불러오는 중…")}<br><span class="small">네트워크(VPN 불필요)·주소를 확인하고 [새로고침]</span></div>`; return; }
   if(lastErr) html+=`<div class="banner">허브 오류: ${esc(lastErr)} · 아래는 <b>${hhmm(lastOkAt)}</b> 기준 데이터입니다 — 버튼은 저장이 안 될 수 있음</div>`;
   if(tab==="todo"){
     const now=todo.filter(r=>dayOf(r)===today), old=todo.filter(r=>dayOf(r)!==today);
+    html += liveStrip();
     html += now.length? now.map(cardTodo).join("") : `<div class="empty">오늘 직접 주문할 건이 없습니다 🎉</div>`;
     if(old.length) html += `<div class="group">이전 미처리 ${old.length}건 — 이미 지난 주문이면 [주문실패]+사유로 닫아 주세요</div>`+old.map(cardTodo).join("");
   }
   else if(tab==="today"){
-    const t=f.filter(r=>dayOf(r)===today);
+    // 날짜 선택 (주인님 2026-09-06: "현황에 날짜도") — 기본 오늘, 다른 날도 볼 수 있게
+    const day=viewDay||today;
+    const t=f.filter(r=>dayOf(r)===day);
     const done=t.filter(r=>r.result==="완주"&&!PARTIAL(r)).length, part=t.filter(PARTIAL).length, fail=t.filter(r=>r.result==="실패").length;
     const cats=new Map(); t.filter(r=>r.result==="실패").forEach(r=>{const k=r.category||"(미분류)";cats.set(k,(cats.get(k)||0)+1)});
-    html+=`<div class="kpi"><div><b>${t.length}</b>오늘 시도</div><div><b style="color:var(--ok)">${done}</b>완주</div>${part?`<div><b style="color:#9fd0ff">${part}</b>부분(음료 빠짐)</div>`:""}<div><b style="color:var(--bad)">${fail}</b>실패</div><div><b>${t.length?Math.round(100*done/t.length):0}%</b>완주율(시도 기준)</div></div>
+    const byPc=new Map(); t.forEach(r=>{const p=pcOf(r); byPc.set(p,(byPc.get(p)||0)+1)});
+    const w=new Date(day+"T00:00:00"); const wd=["일","월","화","수","목","금","토"][isNaN(w)?0:w.getDay()];
+    html+=liveStrip()+`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">${esc(day)} (${wd})</b> <input type="date" id="viewDay" value="${esc(day)}" max="${today}" style="padding:4px 8px"> <button class="small" id="viewToday">오늘</button>
+      <span class="muted small">· PC별 담당자: ${[...byPc.entries()].map(([p,n])=>`<b>${esc(p)}</b> ${esc((pcs[p]||{}).monitor||"(이름 없음)")} ${n}건`).join(" · ")||"—"}</span></div>
+    <div class="kpi"><div><b>${t.length}</b>시도</div><div><b style="color:var(--ok)">${done}</b>완주</div>${part?`<div><b style="color:#9fd0ff">${part}</b>부분(음료 빠짐)</div>`:""}<div><b style="color:var(--bad)">${fail}</b>실패</div><div><b>${t.length?Math.round(100*done/t.length):0}%</b>완주율(시도 기준)</div><div><b>${new Set(t.map(r=>r.order_id)).size}</b>주문 수</div></div>
     <div class="card"><b>실패 분류</b><div class="row">${[...cats.entries()].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="tag fail">${esc(k)} ${esc(v)}</span>`).join("")||'<span class="muted">없음</span>'}</div></div>
-    <div class="card" style="overflow-x:auto"><table><tr><th>시작</th><th>PC</th><th>어드민</th><th>브랜드</th><th>호텔</th><th>메뉴</th><th>매장</th><th>결과</th><th>분류</th></tr>
-    ${t.slice(0,300).map(r=>`<tr><td>${esc(timeOf(r))}</td><td>${esc(pcOf(r))}</td><td>${esc(r.order_id)}</td><td>${esc(r.brand)}</td><td>${esc(r.hotel)}</td><td>${esc(r.menu)}</td><td>${esc(r.store)}</td><td>${resultTag(r)}</td><td class="small">${esc(r.category||"")}</td></tr>`).join("")}</table></div>`;
+    <div class="card" style="overflow-x:auto"><table><tr><th>시각</th><th>담당자</th><th>PC</th><th>와우패스 주문번호</th><th>브랜드 · 지점</th><th>시킨 사람 위치</th><th>주문 내용</th><th>결과</th><th>분류</th><th>담당자 입력</th></tr>
+    ${t.slice(0,400).map(r=>`<tr><td>${esc(timeOf(r))}</td><td>${esc(whoOf(r))}</td><td class="small">${esc(pcOf(r))}</td><td><b>${esc(r.order_id)}</b></td><td>${esc(r.brand)}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel)}</td><td class="small">${esc(r.menu)}</td><td>${resultTag(r)}</td><td class="small">${esc(r.category||"")}</td><td class="small">${r.human_action?`<b>${esc(r.human_action)}</b> `:""}${esc(r.human_reason_cat||"")}${r.human_by?` <span class="muted">(${esc(r.human_by)})</span>`:""}</td></tr>`).join("")}</table></div>`;
   }
   else if(tab==="reasons") html += reasons.length? reasons.slice(0,200).map(cardReason).join("") : `<div class="empty">사유를 기다리는 실패건이 없습니다</div>`;
   else if(tab==="questions"){ const open=qs.filter(q=>!q.answer), done=qs.filter(q=>q.answer);
@@ -198,7 +244,8 @@ function render(auto){
       </dl>${editReasonBox(r)}</div>`).join("")}`;
   }
   m.innerHTML=html;
-  for(const [id,v] of saved){ const el=id&&document.getElementById(id); if(el&&v) el.value=v; }
+  for(const [id,v] of saved){ const el=id&&document.getElementById(id); if(el&&v&&id!=="viewDay") el.value=v; }
+  const vd=$("#viewDay"); if(vd){ vd.onchange=()=>{ viewDay=vd.value===todayStr()?"":vd.value; render(false); }; $("#viewToday").onclick=()=>{ viewDay=""; render(false); }; }
 }
 function resultTag(r){ return PARTIAL(r)?'<span class="tag part">부분</span>':`<span class="tag ${r.result==="완주"?"ok":"fail"}">${esc(r.result)}</span>` }
 // ★ 지점명이 담당자 피드백의 핵심 키 (주인님 2026-09-06: "브랜드만 말고 교촌치킨 홍대점 이렇게") — 브랜드 옆에 굵게.
@@ -207,57 +254,68 @@ function storeLabel(r){ const s=(r.store||"").trim(); if(s) return `<b style="co
 // ★ 카드 = 라벨이 붙은 정보 줄 (주인님 2026-09-06: "태그 달아놓듯이 하면 어떻게 알아" —
 //   시킨 사람 위치 · 내가 검색한 것(위치검색어→주소, 브랜드→지점) · 정확히 뭘 시켰는지 · 와우패스/배민 주문번호를 이름 붙여서)
 function addrFail(r){ const m=(r.reason||"").match(/사다리 소진\)?:\s*\[(.*?)\]/); return m? m[1] : "" }
-function head(r){ const day=dayOf(r), st=STATE_KO[r.state]||r.state||"";
+function head(r){ const day=dayOf(r), st=(Object.prototype.hasOwnProperty.call(STATE_KO,r.state)?STATE_KO[r.state]:(r.state||""));
   const where = r.addr_query||r.addr_picked ? `“${esc(r.addr_query||"?")}” 로 검색 → <b>${esc(r.addr_picked||"?")}</b> 고름`
-              : (addrFail(r)? `<span class="tag fail">위치 못 찾음</span> 시도한 검색어: ${esc(addrFail(r))}` : `<span class="muted">(기록 없음 — 이 칸이 생기기 전 주문)</span>`);
+              : (addrFail(r)? `<span class="tag fail">위치 못 찾음</span> 시도한 검색어: ${esc(addrFail(r))}` : (r.addr_query===undefined||r.addr_query===null? `<span class="muted">(기록 없음 — 이 칸이 생기기 전 주문)</span>` : `<span class="tag fail">위치 단계 전 실패</span> ${esc(r.category||"")}`));
   const storeLine = (r.store||"").trim() ? `“${esc((r.store_query||r.brand||"").replace(/\s*\(후보.*$/,""))}” 로 검색 → <b>${esc(r.store)}</b>${/후보/.test(r.store_query||"")?` <span class="muted">(${esc((r.store_query.match(/\((.*?)\)/)||[])[1]||"")})</span>`:""}`
               : `<span class="tag fail">지점 미확정</span> 매장에 들어가기 전(${esc(r.category||"주소/매장 검색")})에 실패`;
   return `<div class="head"><b>${esc(r.brand)}</b> ${storeLabel(r)} ${day&&day!==todayStr()?`<span class="tag need">${esc(day)}</span>`:""} ${st?`<span class="tag ${r.state==="human_needed"?"need":""}">${esc(st)}${r.attempts?` ${esc(r.attempts)}회`:""}</span>`:""} ${PARTIAL(r)?'<span class="tag part">음료만 남음</span>':""}</div>
+  ${r.ai_explain?`<div class="explain">🤖 <b>왜 실패했나 (AI)</b> — ${esc(r.ai_explain).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")}</div>`:""}
   <dl class="info">
-    <dt>와우패스 주문번호</dt><dd><b>${esc(r.order_id)}</b>${r.baemin_no?` &nbsp;·&nbsp; 배민 주문번호 <b>${esc(r.baemin_no)}</b>`:""} <span class="muted">· PC ${esc(pcOf(r))}${r.started_at?` · ${esc(timeOf(r))}`:""}</span></dd>
+    <dt>와우패스 주문번호</dt><dd><b>${esc(r.order_id)}</b>${r.baemin_no?` &nbsp;·&nbsp; 배민 주문번호 <b>${esc(r.baemin_no)}</b>`:""} <span class="muted">· PC ${esc(pcOf(r))}${r.started_at?` · ${esc(dayOf(r))} ${esc(timeOf(r))}`:""}</span></dd>
     <dt>시킨 사람 위치</dt><dd>🏨 <b>${esc(r.hotel||"(호텔명 없음)")}</b>${r.addr_given?` — ${esc(r.addr_given)}`:""}</dd>
     <dt>배민 위치 검색</dt><dd>${where}</dd>
     <dt>브랜드 · 매장</dt><dd>${esc(r.brand)} — ${storeLine}</dd>
     <dt>주문 내용</dt><dd><b>${esc(r.menu||"")}</b></dd>
     <dt>실패</dt><dd><span class="tag fail">${esc(r.category||"미분류")}</span> <span class="muted">${esc(r.reason)}</span></dd>
   </dl>` }
-function reasonSelect(id){return `<select id="rc-${id}"><option value="">사유 분류 선택 (필수)</option>${REASONS.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select>`}
+// 사유 드롭다운 — AI 추천 분류(suggest_cat)가 있으면 기본 선택 (담당자는 틀리면 바꾸기만)
+function reasonSelect(id, suggested){return `<select id="rc-${id}"><option value="">사유 분류 선택 (필수)</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===suggested?"selected":""}>${l}${v===suggested?" (AI 추천)":""}</option>`).join("")}</select>`}
 function cardTodo(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}
   <div class="row"><span class="small muted">${PARTIAL(r)?"디바이스 A 로 <b>음료만</b> 추가 주문 후:":"담당자가 디바이스 A 로 직접 주문 후:"}</span>
     <button class="ok" onclick="done(${id})">주문완료</button>
     <input id="note-${id}" type="text" placeholder="(선택) OO점에서 됨 / 검색은 XX로">
   </div>
-  <div class="row">${reasonSelect(id)}<input id="fnote-${id}" type="text" placeholder="(기타면) 한 줄"><button class="bad" onclick="fail(${id})">주문실패</button></div></div>`}
-function cardReason(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}<div class="row">${reasonSelect(id)}<input id="fnote-${id}" type="text" placeholder="한 줄"><button class="ok" onclick="saveReason(${id})">저장</button></div></div>`}
+  <div class="row">${reasonSelect(id, r.suggest_cat)}<input id="fnote-${id}" type="text" placeholder="(기타면) 한 줄"><button class="bad" onclick="fail(${id})">주문실패</button></div></div>`}
+function cardReason(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}<div class="row">${reasonSelect(id, r.suggest_cat)}<input id="fnote-${id}" type="text" placeholder="한 줄 (배민 이름 / 되는 지점 / 주문자 오류 등)"><button class="ok" onclick="saveReason(${id})">저장</button></div></div>`}
 function cardQ(q){ const id=Number(q.id); return `<div class="card" id="q-${id}"><div class="head"><b>${esc(q.topic)}</b> <span class="tag">${esc(q.pc_id)}</span></div><div class="reason" style="white-space:pre-wrap;color:var(--fg)">${esc(q.question)}</div>
   <div class="row"><textarea id="ans-${id}" rows="2" placeholder='예: 배민에선 "맛초킹 순살" / 그 지점엔 없음, 충무로역점 / 주문자 오류'></textarea><button class="ok" onclick="answer(${id})">답 저장</button></div></div>`}
 
 // 쓰기 — 주문 단위(order_id)로 모든 시도행을 한 번에 닫고, 0행이면 남이 먼저 처리한 것
-async function done(id){ const r=byId(id); if(!r) return;
+async function done(id){ const r=byId(id); if(!r) return; if(!needName()) return;
   if(!confirm(`[주문완료] ${r.order_id} · ${r.brand} · ${r.hotel||""}\n이 주문이 배민에 들어갔습니까?`)) return;
   try{ const n=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_action=is.null",{human_action:"주문완료",human_by:me(),human_note:(($("#note-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),state:"human_done"});
-    if(!n){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 새로고침했습니다",true); } else toast("주문완료 기록 — AI 가 어드민에 매핑합니다");
+    if(!n){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 새로고침했습니다",true); } else toast("주문완료 기록됨 — 어드민 매핑은 실전 전환 전까지 채팅으로 AI 에게 요청");
     await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
-async function fail(id){ const r=byId(id); if(!r) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요 (필수)");
+async function fail(id){ const r=byId(id); if(!r) return; if(!needName()) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요 (필수)");
   if(!confirm(`[주문실패] ${r.order_id} · ${r.brand} · ${r.hotel||""}\n사유: ${cat}\n정말 주문실패로 기록할까요? (어드민 취소·환불 단계로 넘어갑니다)`)) return;
   try{ const n=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_action=is.null",{human_action:"주문실패",human_by:me(),human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_note:(($("#fnote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),state:"human_failed"});
-    if(!n){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 새로고침했습니다",true); } else toast("주문실패 + 사유 기록");
+    if(!n){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 새로고침했습니다",true); } else toast("주문실패 + 사유 기록됨 — 어드민 취소는 실전 전환 전까지 직접/채팅으로");
     await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
-async function saveReason(id){ const r=byId(id); if(!r) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요");
+async function saveReason(id){ const r=byId(id); if(!r) return; if(!needName()) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요");
   try{ const n=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_reason_cat=is.null",{human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_by:me(),human_note:(($("#fnote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString()});
     if(!n){ toast("이미 다른 담당자가 사유를 달았습니다 — 새로고침했습니다",true); } else toast("사유 저장 — [교정 반영] 탭에서 수정할 수 있습니다");
     await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
 // ★ 저장 후 수정 (주인님 2026-09-06): 고치면 learned/applied 를 되돌려 AI 가 **다시 학습**하게 한다. 잠금 없이 주문 단위로 덮어쓴다.
-async function editReason(id){ const r=byId(id); if(!r) return; const cat=(($("#erc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요");
-  try{ const n=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&or=(human_reason_cat.not.is.null,human_action.not.is.null)",{human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_by:me(),human_note:(($("#enote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),learned:false,case_key:null});
-    if(!n){ toast("수정할 행이 없습니다 — 새로고침했습니다",true); } else toast("수정 저장 — AI 가 다시 학습합니다(반영 표시 해제)");
-    await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
-async function editAnswer(id){ const a=((($("#eans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
-  try{ const n=await patch("questions","id=eq."+id,{answer:a,answered_by:me(),edited_at:new Date().toISOString(),applied:false});
-    if(!n){ toast("수정할 질문이 없습니다",true); } else toast("답 수정 — AI 가 다시 반영합니다");
-    await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
-function editReasonBox(r){ const id=Number(r.id); return `<div class="row"><select id="erc-${id}">${REASONS.map(([v,l])=>`<option value="${v}" ${v===r.human_reason_cat?"selected":""}>${l}</option>`).join("")}</select><input id="enote-${id}" type="text" value="${esc(r.human_note||"")}" placeholder="한 줄"><button class="ok" onclick="editReason(${id})">수정 저장</button></div>` }
-async function answer(id){ const a=((($("#ans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
+async function editReason(id){ const r=byId(id); if(!r) return; if(!needName()) return;
+  const cat=(($("#erc-"+id)||{}).value||""), note=(($("#enote-"+id)||{}).value||"").trim();
+  if(cat===(r.human_reason_cat||"") && note===(r.human_note||"")) return toast("바뀐 내용이 없습니다");
+  // 사유를 비우면 메모만 고친다(사유·틀린쪽은 그대로). 잠금: 내가 본 human_at 그대로일 때만 — 남이 먼저 고쳤으면 0행
+  const body={human_by:me(),human_note:note||null,human_at:new Date().toISOString(),learned:false};
+  if(cat){ body.human_reason_cat=cat; body.who_wrong=WHO[cat]||"AI"; }
+  const lock = r.human_at? "&human_at=eq."+enc(r.human_at) : "&human_at=is.null";
+  try{ const n=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&or=(human_reason_cat.not.is.null,human_action.not.is.null)"+lock, body);
+    if(!n){ toast("다른 담당자가 먼저 고쳤습니다 — 새로고침했습니다",true); } else toast("수정 저장 — AI 가 다시 학습합니다(반영 표시 해제)");
+    dirty.clear(); await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
+async function editAnswer(id){ if(!needName()) return; const q=qs.find(x=>x.id===id); if(!q) return; const a=((($("#eans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
+  if(a===(q.answer||"")) return toast("바뀐 내용이 없습니다");
+  const lock = q.edited_at? "&edited_at=eq."+enc(q.edited_at) : "&edited_at=is.null";
+  try{ const n=await patch("questions","id=eq."+id+lock,{answer:a,answered_by:me(),edited_at:new Date().toISOString(),applied:false});
+    if(!n){ toast("다른 담당자가 먼저 고쳤습니다 — 새로고침했습니다",true); } else toast("답 수정 — AI 가 다시 반영합니다");
+    dirty.clear(); await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
+function editReasonBox(r){ const id=Number(r.id); const known=REASONS.some(([v])=>v===r.human_reason_cat);
+  return `<div class="row"><select id="erc-${id}"><option value="" ${known?"":"selected"}>${r.human_reason_cat&&!known?`(현재: ${esc(r.human_reason_cat)})`:"(사유 없음 — 메모만)"}</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===r.human_reason_cat?"selected":""}>${l}</option>`).join("")}</select><input id="enote-${id}" type="text" value="${esc(r.human_note||"")}" placeholder="한 줄"><button class="ok" onclick="editReason(${id})">수정 저장</button></div>` }
+async function answer(id){ if(!needName()) return; const a=((($("#ans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
   try{ const n=await patch("questions","id=eq."+id+"&answer=is.null",{answer:a,answered_by:me(),answered_at:new Date().toISOString()});
     if(!n){ toast("이미 다른 담당자가 답했습니다 — 새로고침했습니다",true); } else toast("답 저장 — AI 가 다음날 반영");
     await load(true); }catch(e){ toast("저장 실패: "+errText(e),true) } }
