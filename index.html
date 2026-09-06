@@ -36,6 +36,7 @@
     <label class="small">내 이름 <input id="me" type="text" placeholder="예: 홍길동" style="width:110px"></label>
     <label class="small">PC <select id="pcFilter"><option value="">전체</option></select></label>
     <button id="refresh">새로고침</button>
+    <a href="guide.html" target="_blank" class="tag" style="text-decoration:none;padding:6px 10px">📘 가이드</a>
   </div>
 </header>
 <nav>
@@ -171,8 +172,19 @@ function render(auto){
   for(const [id,v] of saved){ const el=id&&document.getElementById(id); if(el&&v) el.value=v; }
 }
 function resultTag(r){ return PARTIAL(r)?'<span class="tag part">부분</span>':`<span class="tag ${r.result==="완주"?"ok":"fail"}">${esc(r.result)}</span>` }
+// ★ 지점명이 담당자 피드백의 핵심 키 (주인님 2026-09-06: "브랜드만 말고 교촌치킨 홍대점 이렇게") — 브랜드 옆에 굵게.
+//   지점 확정 전(주소·매장 검색 단계)에 죽은 건은 지점이 없으므로 그 사실을 적는다.
+function storeLabel(r){ const s=(r.store||"").trim(); if(s) return `<b style="color:var(--acc)">${esc(s)}</b>`; return `<span class="tag fail">지점 미확정 — 매장 진입 전 실패</span>`; }
+// 위치 줄: 어떤 호텔을, 배민에서 어떤 검색어로 찾아 어떤 주소를 골랐는지 / 매장은 어떤 검색어로 몇 후보 중 골랐는지
+function whereLine(r){ const parts=[];
+  if(r.hotel) parts.push(`🏨 <b>${esc(r.hotel)}</b>`);
+  if(r.addr_query||r.addr_picked) parts.push(`위치검색 “${esc(r.addr_query||"?")}” → ${esc(r.addr_picked||"?")}`);
+  else if(/사다리 소진/.test(r.reason||"")) parts.push(`<span class="tag fail">위치검색 실패</span> ${esc((r.reason.match(/\[(.*?)\]/)||[])[1]||"")}`);
+  if(r.store_query) parts.push(`🏪 매장검색 “${esc(r.store_query)}”`);
+  return parts.length? `<div class="reason" style="color:var(--fg)">${parts.join(" · ")}</div>` : "" }
 function head(r){ const day=dayOf(r), st=STATE_KO[r.state]||r.state||"";
-  return `<div class="head"><b>${esc(r.brand)}</b> <span class="muted">${esc(r.menu)}</span> <span class="tag">${esc(r.order_id)}</span> <span class="tag">${esc(pcOf(r))}</span> ${day&&day!==todayStr()?`<span class="tag need">${esc(day)}</span>`:""} ${st?`<span class="tag ${r.state==="human_needed"?"need":""}">${esc(st)}${r.attempts?` ${esc(r.attempts)}회`:""}</span>`:""} ${r.store?`<span class="tag">${esc(r.store)}</span>`:""} ${r.hotel?`<span class="tag">${esc(r.hotel)}</span>`:""} ${PARTIAL(r)?'<span class="tag part">음료만 남음</span>':`<span class="tag">${esc(r.category||"")}</span>`}</div><div class="reason">${esc(r.reason)}</div>` }
+  return `<div class="head"><b>${esc(r.brand)}</b> ${storeLabel(r)} <span class="muted">${esc(r.menu)}</span></div>${whereLine(r)}
+  <div class="head" style="margin-top:4px"><span class="tag">${esc(r.order_id)}</span> <span class="tag">${esc(pcOf(r))}</span> ${day&&day!==todayStr()?`<span class="tag need">${esc(day)}</span>`:""} ${st?`<span class="tag ${r.state==="human_needed"?"need":""}">${esc(st)}${r.attempts?` ${esc(r.attempts)}회`:""}</span>`:""} ${r.hotel?`<span class="tag">🏨 ${esc(r.hotel)}</span>`:""} ${PARTIAL(r)?'<span class="tag part">음료만 남음</span>':`<span class="tag">${esc(r.category||"")}</span>`}</div><div class="reason">${esc(r.reason)}</div>` }
 function reasonSelect(id){return `<select id="rc-${id}"><option value="">사유 분류 선택 (필수)</option>${REASONS.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select>`}
 function cardTodo(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}
   <div class="row"><span class="small muted">${PARTIAL(r)?"디바이스 A 로 <b>음료만</b> 추가 주문 후:":"담당자가 디바이스 A 로 직접 주문 후:"}</span>

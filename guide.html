@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>모니터링 담당자 가이드 — 배민 자동주문 리포트 어드민</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#14181f;--ink2:#4b5563;--dim:#8a93a3;--line:#e6e9ef;--paper:#fbfbfc;--card:#fff;--acc:#2f6fed;--acc2:#eaf1ff;--ok:#12805c;--ok2:#e6f6ef;--bad:#c62828;--bad2:#fdeaea;--warn:#a15c00;--warn2:#fff3df}
+  *{box-sizing:border-box}html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.7 "Noto Sans KR",-apple-system,"Apple SD Gothic Neo",sans-serif;word-break:keep-all}
+  .wrap{max-width:860px;margin:0 auto;padding:0 20px 80px}
+  header.hero{background:linear-gradient(135deg,#1b2a4a 0%,#2f6fed 100%);color:#fff;padding:56px 20px 44px}
+  header.hero .wrap{padding-bottom:0}
+  .kicker{font-size:13px;letter-spacing:.12em;text-transform:uppercase;opacity:.8;font-weight:700}
+  h1{font-size:34px;line-height:1.25;margin:10px 0 14px;font-weight:900}
+  .lead{font-size:17px;opacity:.92;max-width:640px}
+  .urlbox{display:inline-flex;gap:10px;align-items:center;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.35);border-radius:12px;padding:10px 14px;margin-top:22px;font-weight:700}
+  .urlbox a{color:#fff;text-decoration:none;font-family:ui-monospace,Menlo,monospace;font-size:15px}
+  nav.toc{margin:28px 0 8px;display:flex;flex-wrap:wrap;gap:8px}
+  nav.toc a{font-size:13px;color:var(--acc);background:var(--acc2);border-radius:999px;padding:4px 12px;text-decoration:none;font-weight:500}
+  h2{font-size:24px;margin:52px 0 12px;padding-top:8px;font-weight:900;display:flex;align-items:center;gap:10px}
+  h2 .n{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:10px;background:var(--acc);color:#fff;font-size:16px}
+  h3{font-size:18px;margin:26px 0 8px;font-weight:700}
+  p{margin:8px 0}.muted{color:var(--dim)}.small{font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0;box-shadow:0 1px 2px rgba(20,24,31,.04)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:14px 0}
+  .step{border-left:4px solid var(--acc);padding-left:14px;margin:12px 0}
+  .step b{display:block;font-size:17px}
+  .tag{display:inline-block;font-size:12px;font-weight:700;border-radius:6px;padding:2px 8px;vertical-align:middle}
+  .tag.ok{background:var(--ok2);color:var(--ok)}.tag.bad{background:var(--bad2);color:var(--bad)}.tag.warn{background:var(--warn2);color:var(--warn)}.tag.acc{background:var(--acc2);color:var(--acc)}
+  .btn{display:inline-block;font-weight:900;border-radius:8px;padding:3px 12px;font-size:14px;vertical-align:middle}
+  .btn.ok{background:#3ecf8e;color:#052}.btn.bad{background:#3a1c1c;color:#ffb3b3}.btn.save{background:#3ecf8e;color:#052}
+  table{width:100%;border-collapse:collapse;font-size:15px;margin:10px 0}th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--ink2);font-weight:700;background:#f4f6fa}
+  .do,.dont{border-radius:14px;padding:16px 18px;margin:12px 0}
+  .do{background:var(--ok2);border:1px solid #bfe8d3}.dont{background:var(--bad2);border:1px solid #f3c4c4}
+  .do h4,.dont h4{margin:0 0 8px;font-size:16px}.do h4{color:var(--ok)}.dont h4{color:var(--bad)}
+  ul{padding-left:20px;margin:8px 0}li{margin:5px 0}
+  .ex{background:#f4f6fa;border-radius:10px;padding:12px 14px;font-size:15px;margin:8px 0}
+  .ex .q{color:var(--ink2)}.ex .a{font-weight:700;margin-top:4px}
+  .callout{background:var(--warn2);border:1px solid #f1d9a8;border-radius:12px;padding:14px 16px;margin:14px 0}
+  .callout b{color:var(--warn)}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+  .flow span{background:var(--acc2);color:var(--acc);border-radius:10px;padding:8px 12px;font-weight:700;font-size:14px}
+  .flow i{color:var(--dim);font-style:normal}
+  footer{margin-top:60px;color:var(--dim);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+  @media print{header.hero{background:#1b2a4a!important;-webkit-print-color-adjust:exact}.card{break-inside:avoid}nav.toc{display:none}}
+  @media (max-width:600px){h1{font-size:27px}h2{font-size:21px}}
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap">
+  <div class="kicker">WowPass × 배달의민족 · 자동주문</div>
+  <h1>모니터링 담당자 가이드</h1>
+  <p class="lead">AI 가 주문을 넣고, 당신은 <b>AI 가 못 한 것을 대신 넣고 · 왜 못 했는지 알려주는</b> 사람입니다. 이 한 장이면 충분합니다.</p>
+  <div class="urlbox">📍 <a href="https://wowpassoperator-wq.github.io/wowpass-report/">wowpassoperator-wq.github.io/wowpass-report</a></div>
+</div></header>
+
+<div class="wrap">
+<nav class="toc">
+  <a href="#s1">화면 열기</a><a href="#s2">하루 흐름</a><a href="#s3">탭 5개</a><a href="#s4">버튼 규칙</a><a href="#s5">사유 고르기</a><a href="#s6">질문에 답하기</a><a href="#s7">하지 말 것</a><a href="#s8">문제가 생기면</a><a href="#s9">자주 묻는 질문</a>
+</nav>
+
+<h2 id="s1"><span class="n">1</span>화면 열기</h2>
+<div class="card">
+  <p>위 주소를 <b>아무 브라우저</b>에서 열면 됩니다(PC·폰 모두). <b>로그인 없음.</b> 화면은 30초마다 스스로 새로고침되고, 입력 중일 때는 멈춥니다.</p>
+  <p>처음 한 번, 맨 위 <b>내 이름</b> 칸에 이름을 적어 두세요. 당신이 남긴 답에 이름이 붙습니다.</p>
+  <p class="small muted">여러 PC 의 결과가 한 서버에 모입니다. 누가, 어디서 열어도 같은 내용입니다. 사무실 컴퓨터가 꺼져 있어도 열립니다.</p>
+</div>
+
+<h2 id="s2"><span class="n">2</span>하루 흐름 — 당신의 접점은 4개뿐</h2>
+<div class="grid">
+  <div class="card"><span class="tag acc">아침</span><h3 style="margin-top:8px">① "일 시작"</h3><p>VPN 켜고, AI 채팅에 <b>일 시작</b> 이라고 칩니다. AI 가 <b>오늘 파티션 규칙</b>(예: 끝자리 홀수)을 물으면 답하고, <b>어드민 로그인 창</b>이 뜨면 로그인만 합니다.</p></div>
+  <div class="card"><span class="tag warn">낮</span><h3 style="margin-top:8px">② [지금 할 일] 처리</h3><p>AI 가 2~3번 해보고 못 넣은 주문이 올라옵니다. <b>주문용 폰(A)</b>으로 직접 넣고 <span class="btn ok">주문완료</span> 또는 <span class="btn bad">주문실패</span>를 찍습니다.</p></div>
+  <div class="card"><span class="tag acc">틈날 때</span><h3 style="margin-top:8px">③ [실패 사유 입력]</h3><p>예전 실패 중 "왜 실패했는지 사람이 알려주면 AI 가 배울 수 있는 것"이 쌓여 있습니다. 위에서부터 사유만 골라 저장. <b>하루 10~20건이면 충분</b>합니다.</p></div>
+  <div class="card"><span class="tag ok">저녁</span><h3 style="margin-top:8px">④ [미답변 질문] 답하기</h3><p>AI 가 못 푼 질문에 <b>아는 것만</b> 답합니다(5분). 다음 날 아침부터 반영됩니다.</p></div>
+</div>
+<div class="callout"><b>그 외는 전부 AI 가 합니다.</b> 프로그램 켜고 끄기, 최신화, 재시도, 기록, 학습, 성공한 주문의 번호 기입 — 손대지 않아도 됩니다. 궁금하면 AI 채팅에 그냥 물어보세요.</div>
+
+<h2 id="s3"><span class="n">3</span>탭 5개 — 무엇이 보이고 무엇을 하나</h2>
+<table>
+  <tr><th style="width:150px">탭</th><th>무엇이 보이나</th><th style="width:36%">당신이 할 것</th></tr>
+  <tr><td><b>지금 할 일</b> <span class="tag warn">숫자</span></td><td>AI 가 손을 뗀 주문: <b>파킹</b>(재시도 소진) · <b>매장 취소</b> · <b>음료만 남음</b>(치킨은 넣었고 음료 단품이 없던 매장). 오늘 것이 위, 지난 날 미처리는 아래 묶음.</td><td>폰 A 로 직접 주문 → 버튼 하나 찍기. 지난 주문이면 [주문실패]+사유로 닫기.</td></tr>
+  <tr><td><b>오늘 현황</b></td><td>오늘 시도·완주·실패 수, 완주율, 실패 분류, 건별 표(시간·PC·브랜드·호텔·메뉴·매장·결과).</td><td>보기만. 이상하면 AI 에게 "오늘 왜 실패가 많아?"</td></tr>
+  <tr><td><b>실패 사유 입력</b> <span class="tag acc">숫자</span></td><td>사유가 없는 실패 중 <b>학습이 되는 것만</b>(폰 오류·영업시간 같은 건 애초에 안 나옴). 주문당 1건, 나중에 완주된 주문은 빠짐.</td><td>사유 분류 고르고 <span class="btn save">저장</span>. 기타면 한 줄.</td></tr>
+  <tr><td><b>미답변 질문</b> <span class="tag acc">숫자</span></td><td>AI 가 못 푼 것 — "이 메뉴는 배민에서 뭐라고 부르나요?", "이 호텔 주소가 맞나요?" 같은 것. 근거가 함께 적혀 있음.</td><td>아는 것만 답 저장. 모르면 그냥 두기.</td></tr>
+  <tr><td><b>교정 반영</b></td><td>당신이 알려준 것 중 AI 가 <b>실제로 반영한</b> 건 <span class="tag ok">반영</span>, 아직이면 <span class="tag">대기</span>.</td><td>보기만. 반영됐는데 같은 실패가 또 나면 AI 에게 알려주기.</td></tr>
+</table>
+
+<h2 id="s4"><span class="n">4</span>버튼 규칙 — [지금 할 일] 에서</h2>
+<div class="step"><b>1. 주문용 폰(A)을 집는다</b> AI 는 손 뗀 상태입니다. 카드에 적힌 <b>호텔·메뉴·수량 그대로</b> 배민 앱에서 평소처럼 넣습니다.</div>
+<div class="step"><b>2. 결제는 선불권(배민상품권) 100%</b> 주문금액이 상품권 1장보다 크면 <b>2장 이상 체크</b>(체크가 실제로 켜졌는지 확인). 부족하면 넣지 말고 [주문실패] → 기타 → "선불권 부족".</div>
+<div class="step"><b>3. 둘 중 하나를 반드시 찍는다</b></div>
+<table>
+  <tr><th style="width:130px">버튼</th><th>언제</th><th>그다음</th></tr>
+  <tr><td><span class="btn ok">주문완료</span></td><td>주문이 들어갔을 때</td><td>확인창(주문번호·브랜드·호텔)에서 확인. AI 가 어드민에 매핑합니다. <b>(선택)</b> 한 줄 메모 — "OO점에서 됨", "검색은 XX로" — 다음부터 AI 가 그렇게 합니다.</td></tr>
+  <tr><td><span class="btn bad">주문실패</span></td><td>도저히 못 넣을 때</td><td><b>사유 분류 필수</b> → "정말 취소?" 확인 → AI 가 어드민에서 취소 처리로 넘깁니다.</td></tr>
+</table>
+<div class="step"><b>4. 폰을 내려놓는다</b> 버튼을 찍으면 AI 가 폰을 다시 가져가 다음 주문을 합니다. 폰을 만지는 건 이때뿐입니다.</div>
+<div class="callout"><b>같은 건을 둘이 누르면?</b> 먼저 누른 사람 것이 저장되고, 뒤 사람에겐 "이미 다른 담당자가 처리했습니다"가 뜹니다. 여러 명이 볼 때는 위쪽 <b>PC 필터</b>로 내 PC 것만 보면 편합니다.</div>
+
+<h2 id="s5"><span class="n">5</span>사유 고르기 — AI 가 다음에 뭘 다르게 할지 정하는 것</h2>
+<p>정확히 고를수록 AI 가 정확히 배웁니다. 애매하면 <b>기타 + 한 줄</b>이 틀린 분류보다 낫습니다.</p>
+<table>
+  <tr><th style="width:230px">사유</th><th>이럴 때</th><th style="width:30%">AI 가 배우는 것</th></tr>
+  <tr><td>매장 없음 (영업안함/폐업)</td><td>그 지점이 닫혔거나 없어짐</td><td>그 매장 제외, 다른 지점 우선</td></tr>
+  <tr><td>매장에 메뉴 없음</td><td>매장은 맞는데 그 메뉴를 안 팖</td><td>그 매장에선 그 메뉴 안 찾음</td></tr>
+  <tr><td>메뉴 이름이 달라서 못 찾음</td><td>배민에선 다른 이름 (예: 맛초킹 → 맛초킹 순살)</td><td>별칭 등록 — <b>한 줄에 배민 이름을 적어주면 최고</b></td></tr>
+  <tr><td>최소주문 미달 / 금액 불일치</td><td>주문 구성으로는 매장 최소금액에 못 미침, 또는 가격이 다름</td><td>그 매장·구성 조합 기억</td></tr>
+  <tr><td>주소/호텔 못 찾음 — <b>AI 가</b> 못 찾음</td><td>호텔은 진짜 있는데 AI 가 등록을 못 함</td><td>호텔 ↔ 주소 매핑 보강</td></tr>
+  <tr><td>주소/호텔 못 찾음 — <b>주문자가</b> 잘못 적음</td><td>손님이 적은 호텔·주소 자체가 틀림</td><td><span class="tag bad">학습 제외</span> (틀린 사실을 배우지 않게)</td></tr>
+  <tr><td>주문자 오류 (메뉴명 오타 등)</td><td>손님 입력이 틀림</td><td><span class="tag bad">학습 제외</span></td></tr>
+  <tr><td>기타 (한 줄 설명)</td><td>위에 없는 경우</td><td>AI 가 읽고 분류</td></tr>
+</table>
+<div class="callout"><b>"주문자 오류" 두 개는 꼭 구분해 주세요.</b> 이건 AI 가 배우면 안 되는 것입니다. 손님이 틀린 걸 AI 가 "정답"으로 외우면 다음 손님까지 틀립니다.</div>
+
+<h2 id="s6"><span class="n">6</span>질문에 답하기 — 좋은 답의 모양</h2>
+<div class="grid">
+  <div class="ex"><div class="q">Q. [BHC치킨 충무로역점] '맛초킹'을 못 찾음 — 17건. 배민에선 뭐라고 검색하나요?</div><div class="a">A. 충무로역점엔 "맛초킹 순살" / "맛초킹(뼈)" 으로 있음. 검색은 "맛초" 로.</div></div>
+  <div class="ex"><div class="q">Q. [요아정 을지로점] '초코쉘' 담기 실패 — 옵션이 안 잡힘</div><div class="a">A. 을지로점엔 없음. <b>요아정 충무로역점</b>에서 "쉘조합" 메뉴로 넣으면 됨.</div></div>
+  <div class="ex"><div class="q">Q. '서울 중구 명동8나길 15' 호텔명 못 찾음</div><div class="a">A. 호텔스카이파크 명동1호점. 배민 주소 검색은 "스카이파크 명동" 으로.</div></div>
+  <div class="ex"><div class="q">Q. [네네치킨 벡스코점] '네네볼' 못 찾음</div><div class="a">A. 주문자 오류 — 네네볼은 단종. (이렇게 적어주면 AI 가 학습에서 뺍니다)</div></div>
+</div>
+<div class="callout"><b>지점명이 핵심입니다.</b> 같은 브랜드라도 지점마다 메뉴 이름·구성·영업시간이 다릅니다. 카드마다 <b style="color:var(--acc)">파란 굵은 글씨</b>가 AI 가 들어간 지점이고, "지점 미확정" 이면 매장에 들어가기 전(주소·매장 검색)에 실패한 것입니다. 답을 적을 때도 <b>"교촌치킨 홍대점에선…"</b> 처럼 지점을 붙여 주세요.</div>
+<div class="do"><h4>좋은 답</h4><ul><li><b>지점명</b>을 붙여서 ("BHC 충무로역점엔 없음, 공덕점엔 있음")</li><li>배민에서 <b>실제로 보이는 이름</b>을 따옴표로</li><li>모르면 <b>비워 두기</b> (추측은 틀린 학습이 됩니다)</li></ul></div>
+<div class="dont"><h4>피해야 할 답</h4><ul><li>"확인 필요", "잘 모르겠음" — 답이 아니라 빈칸이 낫습니다</li><li>여러 건을 한 답에 몰아 쓰기</li></ul></div>
+
+<h2 id="s7"><span class="n">7</span>하지 말 것</h2>
+<div class="dont"><h4>절대</h4><ul>
+  <li><b>상태 확인용 폰(B)</b>은 만지지 않기 — AI 가 배달 상태·사진을 자동 처리하는 폰입니다. 알림이 떠도 그냥 둡니다.</li>
+  <li>프로그램 켜고 끄기 · 최신화 · 설정 · git · 코드 → 전부 AI. 손대지 않습니다.</li>
+  <li>와우패스 <b>상품권 코드</b>를 배민에 직접 입력하지 않기. 손님 이름·호실을 채팅이나 화면에 옮겨 적지 않기.</li>
+  <li>화면의 정보를 다른 곳에 공유하지 않기(주소는 팀 안에서만).</li>
+</ul></div>
+<div class="do"><h4>대신</h4><ul>
+  <li>판단이 애매하면 AI 채팅에 <b>"이거 어떻게 해?"</b></li>
+  <li>급한 주문은 폰 A 로 직접 넣고 <span class="btn ok">주문완료</span> — 이건 언제나 됩니다.</li>
+</ul></div>
+
+<h2 id="s8"><span class="n">8</span>문제가 생기면</h2>
+<table>
+  <tr><th style="width:280px">증상</th><th>이렇게</th></tr>
+  <tr><td>화면 위에 <span class="tag bad">허브 오류</span> 빨간 띠</td><td>인터넷 연결 확인 → <b>새로고침</b>. 띠가 있는 동안엔 저장이 안 될 수 있습니다(마지막 갱신 시각이 적혀 있음).</td></tr>
+  <tr><td>"허브에 연결하지 못했습니다"</td><td>주소를 다시 확인하고 새로고침. 계속되면 AI 에게 "리포트 어드민이 안 열려".</td></tr>
+  <tr><td>버튼을 눌렀는데 "이미 다른 담당자가 처리"</td><td>정상입니다 — 다른 사람이 먼저 했습니다. 새로고침된 목록을 보세요.</td></tr>
+  <tr><td>[지금 할 일]이 계속 0인데 실패가 많은 것 같다</td><td>[오늘 현황] 을 보고 AI 에게 "오늘 왜 실패가 많아?" — 학습 모드에선 원래 0 입니다(사람이 넣을 주문이 없음).</td></tr>
+  <tr><td>폰이 안 잡혀 / 어드민이 안 열려 / 주문이 멈춘 것 같아</td><td>AI 채팅에 그대로 말하기. AI 가 확인하고 조치합니다. 케이블은 <b>본체 직결</b>이 가장 안정적입니다.</td></tr>
+</table>
+
+<h2 id="s9"><span class="n">9</span>자주 묻는 질문</h2>
+<div class="card"><b>내가 남긴 답은 언제 반영되나요?</b><p>매일 밤 23:05 와 다음 날 아침 "일 시작" 때 AI 가 내려받아 <b>그날 반영</b>합니다. 반영된 것은 [교정 반영] 탭에 <span class="tag ok">반영</span>으로 바뀝니다. 아침에 AI 가 "미반영 N건" 을 확인하므로 빠지지 않습니다.</p></div>
+<div class="card"><b>사무실 컴퓨터가 꺼져 있어도 되나요?</b><p>화면은 열리고, 버튼·답도 저장됩니다. 다만 <b>새 주문 결과는 컴퓨터가 켜져 있어야 올라옵니다</b>(올리는 프로그램이 그 컴퓨터에서 돕니다).</p></div>
+<div class="card"><b>여러 명이 동시에 써도 되나요?</b><p>됩니다. 같은 건을 둘이 누르면 먼저 누른 사람 것만 저장됩니다. PC 필터로 내 것만 보세요.</p></div>
+<div class="card"><b>지금은 왜 [지금 할 일]이 비어 있나요?</b><p>학습 모드(어제 주문을 연습으로 되풀이) 라서 사람이 넣을 주문이 없습니다. 실전 모드로 바뀌면 실시간으로 올라옵니다. 그동안은 [실패 사유 입력]·[미답변 질문] 이 당신의 일입니다.</p></div>
+
+<footer>배민 자동주문 리포트 어드민 · 담당자 가이드 v1 (2026-09-06) · 화면과 이 문서는 릴리스 때 함께 갱신됩니다. 궁금한 것은 AI 채팅에.</footer>
+</div>
+</body>
+</html>
