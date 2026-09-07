@@ -49,11 +49,13 @@
     <label class="small">PC <select id="pcFilter"><option value="">전체</option></select></label>
     <button id="refresh">새로고침</button>
     <a href="guide.html" target="_blank" class="tag" style="text-decoration:none;padding:6px 10px">📘 가이드</a>
+    <a href="failure-guide.pdf" target="_blank" class="tag" style="text-decoration:none;padding:6px 10px" title="AI 가 못 한 주문을 정리하는 방법 (인쇄용)">📕 정리 가이드 PDF</a>
   </div>
 </header>
 <nav>
   <button data-tab="todo" class="on">지금 할 일 <span id="nTodo" class="tag need">0</span></button>
   <button data-tab="today">오늘 현황</button>
+  <button data-tab="daily">일별 통계</button>
   <button data-tab="reasons">실패 사유 입력 <span id="nReasons" class="tag">0</span></button>
   <button data-tab="questions">미답변 질문 <span id="nQ" class="tag">0</span></button>
   <button data-tab="learned">교정 반영</button>
@@ -231,6 +233,17 @@ function render(auto){
     <div class="card" style="overflow-x:auto"><table class="wide"><tr><th>날짜 · 시작 → 종료 · 소요</th><th>담당자 (PC)</th><th>와우패스 주문번호</th><th>브랜드 · 지점</th><th>시킨 사람 위치</th><th>주문 내용</th><th>결과</th><th>분류</th><th>담당자 입력</th></tr>
     ${t.slice(0,400).map(r=>`<tr><td class="nw">${whenCell(r)}</td><td class="nw">${esc(whoOf(r)||"—")} <span class="muted small">(${esc(pcOf(r))})</span></td><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand)}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel)}</td><td class="small">${esc(r.menu)}</td><td class="nw">${resultTag(r)}</td><td class="small nw">${esc(r.category||"")}</td><td class="small">${r.human_action?`<b>${esc(r.human_action)}</b> `:""}${esc(r.human_reason_cat||"")}${r.human_by?` <span class="muted">(${esc(r.human_by)})</span>`:""}</td></tr>`).join("")}</table></div>`;
   }
+  else if(tab==="daily"){
+    // 일별 통계 (주인님 2026-09-08: "일자별 주문/실패/성공률/실패 유형") — 주문 단위로 센다(같은 주문 여러 시도 = 1)
+    const days=dailyStats(f);
+    const T=days.reduce((a,d)=>{a.orders+=d.orders;a.tries+=d.tries;a.done+=d.done;a.part+=d.part;a.fail+=d.fail;a.human+=d.human;return a},{orders:0,tries:0,done:0,part:0,fail:0,human:0});
+    const catsAll=new Map(); days.forEach(d=>d.cats.forEach((v,k)=>catsAll.set(k,(catsAll.get(k)||0)+v)));
+    html+=liveStrip()+`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">일별 통계</b> <span class="muted small">최근 ${WINDOW_DAYS}일 · ${days.length}일치 · 날짜를 누르면 그날 현황으로</span></div>
+    <div class="kpi"><div><b>${T.orders}</b>주문 수</div><div><b style="color:var(--ok)">${T.done}</b>완주(주문)</div>${T.part?`<div><b style="color:#9fd0ff">${T.part}</b>부분</div>`:""}<div><b style="color:var(--bad)">${T.fail}</b>실패(주문)</div><div><b>${T.orders?Math.round(100*T.done/T.orders):0}%</b>완주율(주문 기준)</div><div><b>${T.tries}</b>시도</div><div><b>${T.human}</b>담당자 입력</div></div>
+    <div class="card"><b>실패 유형 (기간 전체, 완주 못 한 주문의 마지막 시도 기준)</b><div class="row">${[...catsAll.entries()].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="tag fail">${esc(k)} ${v}</span>`).join("")||'<span class="muted">없음</span>'}</div></div>
+    <div class="card" style="overflow-x:auto"><table class="wide"><tr><th>날짜</th><th>주문 수</th><th>시도</th><th>완주</th><th>부분</th><th>실패</th><th>완주율</th><th>실패 유형 (건)</th><th>담당자 입력</th><th>담당자 (PC)</th></tr>
+    ${days.map(d=>`<tr><td class="nw"><a href="#" onclick="viewDay='${esc(d.day)}';tab='today';render(false);return false" style="color:var(--fg)"><b>${esc(d.day)}</b> <span class="muted">(${d.wd})</span></a></td><td><b>${d.orders}</b></td><td class="muted">${d.tries}</td><td style="color:var(--ok)"><b>${d.done}</b></td><td style="color:#9fd0ff">${d.part||""}</td><td style="color:var(--bad)"><b>${d.fail}</b></td><td class="nw"><b>${d.orders?Math.round(100*d.done/d.orders):0}%</b></td><td class="small">${[...d.cats.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>`<span class="tag fail">${esc(k)} ${v}</span>`).join(" ")}${d.cats.size>5?` <span class="muted">외 ${d.cats.size-5}종</span>`:""}</td><td class="nw">${d.human||""}</td><td class="small nw">${[...d.pcs.entries()].map(([p,n])=>`${esc((pcs[p]||{}).monitor||"—")} <span class="muted">(${esc(p)} ${n})</span>`).join("<br>")}</td></tr>`).join("")}</table></div>`;
+  }
   else if(tab==="reasons") html += reasons.length? reasons.slice(0,200).map(cardReason).join("") : `<div class="empty">사유를 기다리는 실패건이 없습니다</div>`;
   else if(tab==="questions"){ const open=qs.filter(q=>!q.answer), done=qs.filter(q=>q.answer);
     html += (open.length? open.map(cardQ).join("") : `<div class="empty">미답변 질문이 없습니다</div>`) + (done.length? `<div class="card"><b class="muted">답변 완료 ${done.length}건</b> <span class="small muted">— 고치면 AI 가 다시 반영합니다</span>${done.slice(0,50).map(q=>`<div class="reason" id="q-${Number(q.id)}">Q: ${esc(String(q.question??"").slice(0,160))}<br>A: <span style="color:var(--fg)">${esc(q.answer)}</span> <span class="small muted">— ${esc(q.answered_by||"")}${q.applied?' · <span class="tag ok">반영</span>':' · <span class="tag">대기</span>'}</span>
@@ -251,6 +264,27 @@ function render(auto){
   m.innerHTML=html;
   for(const [id,v] of saved){ const el=id&&document.getElementById(id); if(el&&v&&id!=="viewDay") el.value=v; }
   const vd=$("#viewDay"); if(vd){ vd.onchange=()=>{ viewDay=vd.value===todayStr()?"":vd.value; render(false); }; $("#viewToday").onclick=()=>{ viewDay=""; render(false); }; }
+}
+// 일별 집계 — 주문 단위. 한 주문의 그날 시도 중 하나라도 완주면 완주, 완주 없이 부분만 있으면 부분, 둘 다 없으면 실패(유형은 마지막 시도의 분류)
+function dailyStats(list){
+  const byDay=new Map();
+  for(const r of list){ const d=dayOf(r); if(!d) continue; if(!byDay.has(d)) byDay.set(d,[]); byDay.get(d).push(r); }
+  const out=[];
+  for(const [day,rs] of byDay){
+    const orders=new Map();                                   // order_id → rows (시도시각 내림차순 유지)
+    for(const r of rs){ if(!orders.has(r.order_id)) orders.set(r.order_id,[]); orders.get(r.order_id).push(r); }
+    let done=0, part=0, fail=0; const cats=new Map(), pcsM=new Map();
+    for(const [,ors] of orders){
+      if(ors.some(x=>x.result==="완주"&&!PARTIAL(x))) done++;
+      else if(ors.some(PARTIAL)) part++;
+      else { fail++; const k=(ors[0].category||"(미분류)"); cats.set(k,(cats.get(k)||0)+1); }
+    }
+    rs.forEach(r=>{ const p=pcOf(r); pcsM.set(p,(pcsM.get(p)||0)+1); });
+    const human=new Set(rs.filter(r=>r.human_action||r.human_reason_cat).map(r=>r.order_id)).size;
+    const w=new Date(day+"T00:00:00"); const wd=["일","월","화","수","목","금","토"][isNaN(w)?0:w.getDay()];
+    out.push({day,wd,orders:orders.size,tries:rs.length,done,part,fail,cats,human,pcs:pcsM});
+  }
+  return out.sort((a,b)=>a.day<b.day?1:-1);
 }
 function resultTag(r){ return PARTIAL(r)?'<span class="tag part">부분</span>':`<span class="tag ${r.result==="완주"?"ok":"fail"}">${esc(r.result)}</span>` }
 // ★ 지점명이 담당자 피드백의 핵심 키 (주인님 2026-09-06: "브랜드만 말고 교촌치킨 홍대점 이렇게") — 브랜드 옆에 굵게.
