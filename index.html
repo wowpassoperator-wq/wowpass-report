@@ -236,11 +236,11 @@ function render(auto){
   else if(tab==="daily"){
     // 일별 통계 (주인님 2026-09-08: "일자별 주문/실패/성공률/실패 유형") — 주문 단위로 센다(같은 주문 여러 시도 = 1)
     const days=dailyStats(f);
-    const T=days.reduce((a,d)=>{a.orders+=d.orders;a.tries+=d.tries;a.done+=d.done;a.part+=d.part;a.fail+=d.fail;a.human+=d.human;return a},{orders:0,tries:0,done:0,part:0,fail:0,human:0});
-    const catsAll=new Map(); days.forEach(d=>d.cats.forEach((v,k)=>catsAll.set(k,(catsAll.get(k)||0)+v)));
+    // 기간 합계는 주문을 **한 번만** 센다 (여러 날에 걸쳐 재시도한 주문을 날마다 더하면 부풀려짐). 완주 = 기간 중 한 번이라도 완주.
+    const T=orderStats(f);
     html+=liveStrip()+`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">일별 통계</b> <span class="muted small">최근 ${WINDOW_DAYS}일 · ${days.length}일치 · 날짜를 누르면 그날 현황으로</span></div>
-    <div class="kpi"><div><b>${T.orders}</b>주문 수</div><div><b style="color:var(--ok)">${T.done}</b>완주(주문)</div>${T.part?`<div><b style="color:#9fd0ff">${T.part}</b>부분</div>`:""}<div><b style="color:var(--bad)">${T.fail}</b>실패(주문)</div><div><b>${T.orders?Math.round(100*T.done/T.orders):0}%</b>완주율(주문 기준)</div><div><b>${T.tries}</b>시도</div><div><b>${T.human}</b>담당자 입력</div></div>
-    <div class="card"><b>실패 유형 (기간 전체, 완주 못 한 주문의 마지막 시도 기준)</b><div class="row">${[...catsAll.entries()].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="tag fail">${esc(k)} ${v}</span>`).join("")||'<span class="muted">없음</span>'}</div></div>
+    <div class="kpi"><div><b>${T.orders}</b>주문 수 <span class="muted small">(기간, 중복 없이)</span></div><div><b style="color:var(--ok)">${T.done}</b>완주(주문)</div>${T.part?`<div><b style="color:#9fd0ff">${T.part}</b>부분</div>`:""}<div><b style="color:var(--bad)">${T.fail}</b>아직 실패</div><div><b>${T.orders?Math.round(100*T.done/T.orders):0}%</b>완주율(주문 기준)</div><div><b>${T.tries}</b>시도</div><div><b>${T.human}</b>담당자 입력</div></div>
+    <div class="card"><b>실패 유형 (기간 전체 — 아직 완주 못 한 주문의 마지막 시도 기준)</b><div class="row">${[...T.cats.entries()].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="tag fail">${esc(k)} ${v}</span>`).join("")||'<span class="muted">없음</span>'}</div></div>
     <div class="card" style="overflow-x:auto"><table class="wide"><tr><th>날짜</th><th>주문 수</th><th>시도</th><th>완주</th><th>부분</th><th>실패</th><th>완주율</th><th>실패 유형 (건)</th><th>담당자 입력</th><th>담당자 (PC)</th></tr>
     ${days.map(d=>`<tr><td class="nw"><a href="#" onclick="viewDay='${esc(d.day)}';tab='today';render(false);return false" style="color:var(--fg)"><b>${esc(d.day)}</b> <span class="muted">(${d.wd})</span></a></td><td><b>${d.orders}</b></td><td class="muted">${d.tries}</td><td style="color:var(--ok)"><b>${d.done}</b></td><td style="color:#9fd0ff">${d.part||""}</td><td style="color:var(--bad)"><b>${d.fail}</b></td><td class="nw"><b>${d.orders?Math.round(100*d.done/d.orders):0}%</b></td><td class="small">${[...d.cats.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>`<span class="tag fail">${esc(k)} ${v}</span>`).join(" ")}${d.cats.size>5?` <span class="muted">외 ${d.cats.size-5}종</span>`:""}</td><td class="nw">${d.human||""}</td><td class="small nw">${[...d.pcs.entries()].map(([p,n])=>`${esc((pcs[p]||{}).monitor||"—")} <span class="muted">(${esc(p)} ${n})</span>`).join("<br>")}</td></tr>`).join("")}</table></div>`;
   }
@@ -266,23 +266,26 @@ function render(auto){
   const vd=$("#viewDay"); if(vd){ vd.onchange=()=>{ viewDay=vd.value===todayStr()?"":vd.value; render(false); }; $("#viewToday").onclick=()=>{ viewDay=""; render(false); }; }
 }
 // 일별 집계 — 주문 단위. 한 주문의 그날 시도 중 하나라도 완주면 완주, 완주 없이 부분만 있으면 부분, 둘 다 없으면 실패(유형은 마지막 시도의 분류)
+function orderStats(rs){
+  const orders=new Map();                                     // order_id → rows (시도시각 내림차순 유지)
+  for(const r of rs){ if(!orders.has(r.order_id)) orders.set(r.order_id,[]); orders.get(r.order_id).push(r); }
+  let done=0, part=0, fail=0; const cats=new Map(), pcsM=new Map();
+  for(const [,ors] of orders){
+    if(ors.some(x=>x.result==="완주"&&!PARTIAL(x))) done++;
+    else if(ors.some(PARTIAL)) part++;
+    else { fail++; const k=(ors[0].category||"(미분류)"); cats.set(k,(cats.get(k)||0)+1); }
+  }
+  rs.forEach(r=>{ const p=pcOf(r); pcsM.set(p,(pcsM.get(p)||0)+1); });
+  const human=new Set(rs.filter(r=>r.human_action||r.human_reason_cat).map(r=>r.order_id)).size;
+  return {orders:orders.size,tries:rs.length,done,part,fail,cats,human,pcs:pcsM};
+}
 function dailyStats(list){
   const byDay=new Map();
   for(const r of list){ const d=dayOf(r); if(!d) continue; if(!byDay.has(d)) byDay.set(d,[]); byDay.get(d).push(r); }
   const out=[];
   for(const [day,rs] of byDay){
-    const orders=new Map();                                   // order_id → rows (시도시각 내림차순 유지)
-    for(const r of rs){ if(!orders.has(r.order_id)) orders.set(r.order_id,[]); orders.get(r.order_id).push(r); }
-    let done=0, part=0, fail=0; const cats=new Map(), pcsM=new Map();
-    for(const [,ors] of orders){
-      if(ors.some(x=>x.result==="완주"&&!PARTIAL(x))) done++;
-      else if(ors.some(PARTIAL)) part++;
-      else { fail++; const k=(ors[0].category||"(미분류)"); cats.set(k,(cats.get(k)||0)+1); }
-    }
-    rs.forEach(r=>{ const p=pcOf(r); pcsM.set(p,(pcsM.get(p)||0)+1); });
-    const human=new Set(rs.filter(r=>r.human_action||r.human_reason_cat).map(r=>r.order_id)).size;
     const w=new Date(day+"T00:00:00"); const wd=["일","월","화","수","목","금","토"][isNaN(w)?0:w.getDay()];
-    out.push({day,wd,orders:orders.size,tries:rs.length,done,part,fail,cats,human,pcs:pcsM});
+    out.push(Object.assign({day,wd},orderStats(rs)));
   }
   return out.sort((a,b)=>a.day<b.day?1:-1);
 }
