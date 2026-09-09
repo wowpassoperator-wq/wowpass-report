@@ -107,7 +107,9 @@ const REASONS = [
 const WHO = {"주소주문자오류":"주문자","주문자오류":"주문자"};
 // 사람이 사유를 달아도 학습이 안 되는 분류 (hub_shipper.NOT_LEARNABLE 와 같게) — 사유 입력 목록에서 뺀다
 const NOT_LEARNABLE = new Set(["매장영업시간","앱진입","인프라(폰/adb)","결제버튼못찾음","금액가드","매장문맥","코드오류"]);
-const PARTIAL = r => String(r.category||"").startsWith("음료단품없음(부분");   // 치킨은 넣었고 음료만 담당자 몫
+// 부분 = 실전에서 치킨은 넣었고 음료만 담당자 몫. 연습 모드의 '(부분·연습)' 은 손님이 이미 받은 주문이라 담당자 일이 아니다
+//   (2026-09-09 주인님: 9/8 연습 주문 41800 이 '지금 할 일' 에 떠 있었다) → 정확히 '음료단품없음(부분)' 만.
+const PARTIAL = r => String(r.category||"")==="음료단품없음(부분)";
 const STATE_KO = {human_needed:"파킹 — 직접 주문", store_cancelled:"매장 취소", ai_failed:"AI 실패", ai_success:"AI 완주", human_done:"담당자 완료", human_failed:"담당자 실패", mapped:"매핑됨", cancelled:"취소됨"};
 
 let rows=[], qs=[], qsLite=[], tab="todo", viewDay="";        // viewDay: 현황 탭에서 보는 날짜 (빈값=오늘)
@@ -196,7 +198,7 @@ async function load(force){
     // A) 최근 3일 전체  B) 사람 몫(파킹·매장취소·부분) — 날짜 무관 (todo 계약: 어제 파킹건도 보여야 한다)
     const [a,b,q1,p1]=await Promise.all([
       get("order_reports?select="+COLS+"&created_at=gte."+enc(isoDaysAgo(LIVE_DAYS))+"&order=id.desc", sig),
-      get("order_reports?select="+COLS+"&human_action=is.null&or=(state.eq.human_needed,state.eq.store_cancelled,category.like."+enc("음료단품없음(부분*")+")&order=id.desc", sig),
+      get("order_reports?select="+COLS+"&human_action=is.null&or=(state.eq.human_needed,state.eq.store_cancelled,category.eq."+enc("음료단품없음(부분)")+")&order=id.desc", sig),
       get("questions?select=id,answer,applied&order=id.desc", sig),
       get("pcs?select=*", sig).catch(()=>[])]);
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
