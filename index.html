@@ -110,7 +110,7 @@ const NOT_LEARNABLE = new Set(["매장영업시간","앱진입","인프라(폰/a
 // 부분 = 실전에서 치킨은 넣었고 음료만 담당자 몫. 연습 모드의 '(부분·연습)' 은 손님이 이미 받은 주문이라 담당자 일이 아니다
 //   (2026-09-09 주인님: 9/8 연습 주문 41800 이 '지금 할 일' 에 떠 있었다) → 정확히 '음료단품없음(부분)' 만.
 const PARTIAL = r => String(r.category||"")==="음료단품없음(부분)";
-const STATE_KO = {human_needed:"파킹 — 직접 주문", store_cancelled:"매장 취소", ai_failed:"AI 실패", ai_success:"AI 완주", human_done:"담당자 완료", human_failed:"담당자 실패", mapped:"매핑됨", cancelled:"취소됨"};
+const STATE_KO = {human_takeover:"담당자 개입 — 수기 주문 중", human_needed:"파킹 — 직접 주문", store_cancelled:"매장 취소", ai_failed:"AI 실패", ai_success:"AI 완주", human_done:"담당자 완료", human_failed:"담당자 실패", mapped:"매핑됨", cancelled:"취소됨"};
 
 let rows=[], qs=[], qsLite=[], tab="todo", viewDay="";        // viewDay: 현황 탭에서 보는 날짜 (빈값=오늘)
 let live=[], hist=[], histAt=0, qsAt=0, nReasonsSrv=null;      // live: 폴링(3일∪사람몫) · hist: 90일(탭 열 때) · rows = hist ⊕ live
@@ -118,7 +118,7 @@ const details=new Map();                                        // id → {ai_ex
 let detailsBusy=false, histBusy=false, qsBusy=false, dataSeq=0;   // dataSeq: 머지가 일어나면 +1 — 그 전에 떠난 조회 응답은 버린다(경주 방지)
 const sig = ms => (typeof AbortSignal!=="undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
 // 사람 몫(B) 판정 — 서버 B 쿼리와 같은 조건. 폴링 후 이 조건인데 B 에 없는 hist 행은 남이 닫은 것 → 버린다
-const isHumanNeeded = r => !r.human_action && (r.state==="human_needed"||r.state==="store_cancelled"||PARTIAL(r));
+const isHumanNeeded = r => !r.human_action && (r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r));
 function rebuildRows(){ const m=new Map(); for(const r of hist) m.set(r.id,r); for(const r of live) m.set(r.id,r); rows=[...m.values()].sort((a,b)=>(tsOf(b)-tsOf(a))||(b.id-a.id)); }
 const full = r => details.has(r.id)? Object.assign({}, r, details.get(r.id)) : r;
 // 저장 응답(return=representation: 전 컬럼)을 그대로 머지 — 재조회 없이 화면·배지 갱신
@@ -155,7 +155,15 @@ function liveStrip(){ const ps=Object.values(pcs); if(!ps.length) return "";
   const items=ps.map(p=>{ const stale=p.updated_at && (Date.now()-new Date(p.updated_at).getTime())>3*60000;
     let s; if(stale) s=`<span class="tag fail">연결 끊김</span> ${ago(p.updated_at)} 전 소식`;
     else if(!p.batch_alive) s=`<span class="tag">배치 꺼짐</span>`;
-    else if(p.current_order) s=`<b>${esc(p.current_order)}</b> ${esc(p.current_brand||"")} · ${esc(p.current_step||"")} · ${ago(p.current_since)}`;
+    else if(p.current_order){
+      const mins=Math.round((Date.now()-new Date(p.current_since||0).getTime())/60000);
+      const slow=mins>=6;                                          // 6분 넘으면 "헤매는 중?" — 담당자가 개입할지 판단하는 눈금
+      const canTake=("takeover_order" in p);                         // 허브에 개입 칸이 있을 때만 버튼(hub_schema_takeover.sql)
+      const taking=p.takeover_order && String(p.takeover_order)===String(p.current_order);
+      s=`<b>${esc(p.current_order)}</b> ${esc(p.current_brand||"")} · <b>${esc(p.current_step||"")}</b> · ${ago(p.current_since)}${slow?' <span class="tag need">헤매는 중?</span>':""}`
+        +(p.current_detail?`<div class="small muted" style="margin-left:22px">↳ ${esc(p.current_detail)}</div>`:"")
+        +(canTake? (taking? `<div style="margin-left:22px"><span class="tag need">개입 요청됨 — AI 멈춤. 폰 A 로 이어서 주문하고 아래 카드에서 주문완료/실패를 저장하세요</span> <button class="small" onclick="resumeAI('${esc(p.pc_id)}')">AI 재개(취소)</button></div>`
+                             : `<div style="margin-left:22px"><button class="bad small" onclick="takeover('${esc(p.pc_id)}','${esc(p.current_order)}')">수기 배달로 넘기기</button> <span class="small muted">AI 가 헤매면 — 지금 화면 그대로 멈추고 담당자가 폰 A 로 이어서</span></div>`) : ""); }
     else s=`<span class="tag ok">대기 중</span> 다음 주문 준비`;
     return `<div><span class="muted">🤖 ${esc(p.pc_id)}${p.monitor?` (${esc(p.monitor)})`:""}</span> — ${s}</div>`; });
   return `<div class="card" style="background:#12161f"><b class="small muted">AI 가 지금 하는 일</b>${items.join("")}</div>`; }
@@ -198,7 +206,7 @@ async function load(force){
     // A) 최근 3일 전체  B) 사람 몫(파킹·매장취소·부분) — 날짜 무관 (todo 계약: 어제 파킹건도 보여야 한다)
     const [a,b,q1,p1]=await Promise.all([
       get("order_reports?select="+COLS+"&created_at=gte."+enc(isoDaysAgo(LIVE_DAYS))+"&order=id.desc", sig),
-      get("order_reports?select="+COLS+"&human_action=is.null&or=(state.eq.human_needed,state.eq.store_cancelled,category.eq."+enc("음료단품없음(부분)")+")&order=id.desc", sig),
+      get("order_reports?select="+COLS+"&human_action=is.null&or=(state.eq.human_needed,state.eq.store_cancelled,state.eq.human_takeover,category.eq."+enc("음료단품없음(부분)")+")&order=id.desc", sig),
       get("questions?select=id,answer,applied&order=id.desc", sig),
       get("pcs?select=*", sig).catch(()=>[])]);
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
@@ -243,7 +251,7 @@ function counts(){
   const solved=new Set(f.filter(r=>r.result==="완주"&&!PARTIAL(r)).map(r=>r.order_id));   // 부분(음료 빠짐)은 아직 일
   const latest=latestPerOrder(f);
   // 지금 할 일 = AI 가 손 뗀 것만 (파킹·매장취소·부분). AI 재시도 중(ai_failed)은 이중주문 위험이라 안 띄움. 날짜 무관(어제 파킹건도)
-  const todo=latest.filter(r=>!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||PARTIAL(r)));
+  const todo=latest.filter(r=>!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r)));
   // 사유 입력 = 학습이 되는 실패 중 사유 없는 것 (백로그 — 틈날 때)
   const reasons=latest.filter(r=>r.result==="실패"&&!labeled.has(r.order_id)&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&!NOT_LEARNABLE.has(r.category||""));
   $("#nTodo").textContent=todo.length; $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
@@ -260,7 +268,7 @@ function render(auto){
   const needHist = tab==="reasons" || tab==="learned" || tab==="daily" || (tab==="today" && viewDay && viewDay!==today);
   if(needHist && !histFresh()) ensureHist();
   if(tab==="questions" || tab==="learned") ensureQs();
-  const snap=JSON.stringify([tab,$("#pcFilter").value,lastErr,loadedOnce,rows.length,qs.length,details.size,histAt,
+  const snap=JSON.stringify([tab,$("#pcFilter").value,lastErr,loadedOnce,rows.length,qs.length,details.size,histAt,Object.values(pcs).map(p=>[p.pc_id,p.current_order,p.current_step,p.current_detail,p.takeover_order,p.batch_alive]),
     rows.slice(0,600).map(r=>[r.id,r.human_action,r.human_reason_cat,r.learned,r.state,r.human_by,r.human_at]), qs.map(q=>[q.id,q.answer,q.applied,q.edited_at])]);
   if(auto&&(typing||snap===lastSnap)) return;
   lastSnap=snap;
@@ -374,7 +382,7 @@ function head(r0){ const r=full(r0); const day=dayOf(r), st=(Object.prototype.ha
 // 사유 드롭다운 — AI 추천 분류(suggest_cat)가 있으면 기본 선택 (담당자는 틀리면 바꾸기만)
 function reasonSelect(id, suggested){return `<select id="rc-${id}"><option value="">사유 분류 선택 (필수)</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===suggested?"selected":""}>${l}${v===suggested?" (AI 추천)":""}</option>`).join("")}</select>`}
 function cardTodo(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}
-  <div class="row"><span class="small muted">${PARTIAL(r)?"디바이스 A 로 <b>음료만</b> 추가 주문 후:":"담당자가 디바이스 A 로 직접 주문 후:"}</span>
+  <div class="row"><span class="small muted">${r.state==="human_takeover"?"<b>개입한 주문</b> — 폰 A 화면을 이어서 주문한 뒤:":PARTIAL(r)?"디바이스 A 로 <b>음료만</b> 추가 주문 후:":"담당자가 디바이스 A 로 직접 주문 후:"}</span>
     <button class="ok" onclick="done(${id})">주문완료</button>
     <input id="note-${id}" type="text" placeholder="(선택) OO점에서 됨 / 검색은 XX로">
   </div>
@@ -383,18 +391,28 @@ function cardReason(r){ const id=Number(r.id); return `<div class="card" id="c-$
 function cardQ(q){ const id=Number(q.id); return `<div class="card" id="q-${id}"><div class="head"><b>${esc(q.topic)}</b> <span class="tag">${esc(q.pc_id)}</span></div><div class="reason" style="white-space:pre-wrap;color:var(--fg)">${esc(q.question)}</div>
   <div class="row"><textarea id="ans-${id}" rows="2" placeholder='예: 배민에선 "맛초킹 순살" / 그 지점엔 없음, 충무로역점 / 주문자 오류'></textarea><button class="ok" onclick="answer(${id})">답 저장</button></div></div>`}
 
+// ★ 수기 개입 (주인님 2026-09-09): 담당자가 누르면 허브 pcs.takeover_order 에 주문번호가 적히고, 배치가 5초 안에 그 자리에서 멈춘다.
+//   폰 화면은 그대로 남고, AI 는 담당자가 그 주문 카드에서 주문완료/실패를 저장할 때까지 기다린다(저장하면 자동 해제).
+async function takeover(pc, orderId){ if(!needName()) return;
+  if(!confirm(`[수기 배달로 넘기기] ${orderId}\nAI 가 지금 화면에서 즉시 멈추고, 이 주문은 담당자가 폰 A 로 이어서 넣습니다.\n녹화는 나중에 분석용으로 저장됩니다. 넘길까요?`)) return;
+  try{ const upd=await patch("pcs","pc_id=eq."+enc(pc)+"&takeover_order=is.null",{takeover_order:String(orderId),takeover_by:me(),takeover_at:new Date().toISOString()});
+    if(!upd.length) toast("이미 개입 요청이 있거나 PC 를 못 찾음 — 새로고침",true); else toast("개입 요청됨 — AI 가 5초 안에 멈춥니다. 폰 A 화면을 이어서 조작하세요",true);
+    load(false); }catch(e){ toast("개입 요청 실패: "+errText(e),true) } }
+async function resumeAI(pc){ if(!needName()) return;
+  try{ await patch("pcs","pc_id=eq."+enc(pc),{takeover_order:null,takeover_by:null,takeover_at:null}); toast("AI 재개"); load(false); }catch(e){ toast("재개 실패: "+errText(e),true) } }
+async function clearTakeover(orderId){ try{ await patch("pcs","takeover_order=eq."+enc(orderId),{takeover_order:null,takeover_by:null,takeover_at:null}); }catch(e){} }
 // 쓰기 — 주문 단위(order_id)로 모든 시도행을 한 번에 닫고, 0행이면 남이 먼저 처리한 것
 async function done(id){ const r=byId(id); if(!r) return; if(!needName()) return;
   if(!confirm(`[주문완료] ${r.order_id} · ${r.brand} · ${r.hotel||""}\n이 주문이 배민에 들어갔습니까?`)) return;
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_action=is.null",{human_action:"주문완료",human_by:me(),human_note:(($("#note-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),state:"human_done"});
     if(!upd.length){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 이 주문을 다시 불러왔습니다",true); await reloadOrder(r.order_id); }
-    else { toast("주문완료 기록됨 — 어드민 매핑은 실전 전환 전까지 채팅으로 AI 에게 요청"); mergeRows(upd); render(false); }
+    else { toast("주문완료 기록됨 — 어드민 매핑은 실전 전환 전까지 채팅으로 AI 에게 요청"); mergeRows(upd); clearTakeover(r.order_id); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 async function fail(id){ const r=byId(id); if(!r) return; if(!needName()) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요 (필수)");
   if(!confirm(`[주문실패] ${r.order_id} · ${r.brand} · ${r.hotel||""}\n사유: ${cat}\n정말 주문실패로 기록할까요? (어드민 취소·환불 단계로 넘어갑니다)`)) return;
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_action=is.null",{human_action:"주문실패",human_by:me(),human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_note:(($("#fnote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),state:"human_failed"});
     if(!upd.length){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 이 주문을 다시 불러왔습니다",true); await reloadOrder(r.order_id); }
-    else { toast("주문실패 + 사유 기록됨 — 어드민 취소는 실전 전환 전까지 직접/채팅으로"); mergeRows(upd); refreshBacklogCount(); render(false); }
+    else { toast("주문실패 + 사유 기록됨 — 어드민 취소는 실전 전환 전까지 직접/채팅으로"); mergeRows(upd); clearTakeover(r.order_id); refreshBacklogCount(); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 async function saveReason(id){ const r=byId(id); if(!r) return; if(!needName()) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요");
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_reason_cat=is.null",{human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_by:me(),human_note:(($("#fnote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString()});
