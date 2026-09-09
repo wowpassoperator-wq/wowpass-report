@@ -113,15 +113,19 @@ const STATE_KO = {human_needed:"파킹 — 직접 주문", store_cancelled:"매�
 let rows=[], qs=[], qsLite=[], tab="todo", viewDay="";        // viewDay: 현황 탭에서 보는 날짜 (빈값=오늘)
 let live=[], hist=[], histAt=0, qsAt=0, nReasonsSrv=null;      // live: 폴링(3일∪사람몫) · hist: 90일(탭 열 때) · rows = hist ⊕ live
 const details=new Map();                                        // id → {ai_explain, reason, addr_*, store_query, human_note, case_key}
-let detailsBusy=false, histBusy=false, qsBusy=false;
+let detailsBusy=false, histBusy=false, qsBusy=false, dataSeq=0;   // dataSeq: 머지가 일어나면 +1 — 그 전에 떠난 조회 응답은 버린다(경주 방지)
+const sig = ms => (typeof AbortSignal!=="undefined" && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
+// 사람 몫(B) 판정 — 서버 B 쿼리와 같은 조건. 폴링 후 이 조건인데 B 에 없는 hist 행은 남이 닫은 것 → 버린다
+const isHumanNeeded = r => !r.human_action && (r.state==="human_needed"||r.state==="store_cancelled"||PARTIAL(r));
 function rebuildRows(){ const m=new Map(); for(const r of hist) m.set(r.id,r); for(const r of live) m.set(r.id,r); rows=[...m.values()].sort((a,b)=>(tsOf(b)-tsOf(a))||(b.id-a.id)); }
 const full = r => details.has(r.id)? Object.assign({}, r, details.get(r.id)) : r;
 // 저장 응답(return=representation: 전 컬럼)을 그대로 머지 — 재조회 없이 화면·배지 갱신
-function mergeRows(upd){ for(const u of upd){ if(!u||u.id==null) continue; const d={}; for(const k of DETAIL_COLS.split(",")) if(k!=="id" && k in u) d[k]=u[k]; if(Object.keys(d).length) details.set(u.id, Object.assign(details.get(u.id)||{}, d));
+function mergeRows(upd){ dataSeq++; seq++; if(ctrl) ctrl.abort();      // 진행 중이던 폴링·조회 응답은 버린다(저장 직전 스냅샷이 저장을 되돌리는 경주)
+  for(const u of upd){ if(!u||u.id==null) continue; const d={}; for(const k of DETAIL_COLS.split(",")) if(k!=="id" && k in u) d[k]=u[k]; if(Object.keys(d).length) details.set(u.id, Object.assign(details.get(u.id)||{}, d));
     const slim={}; for(const k of COLS.split(",")) if(k in u) slim[k]=u[k];
     let hit=false; live=live.map(r=>r.id===u.id?(hit=true,Object.assign({},r,slim)):r); hist=hist.map(r=>r.id===u.id?(hit=true,Object.assign({},r,slim)):r); if(!hit) live.push(slim); }
   rebuildRows(); }
-function mergeQs(upd){ for(const u of upd){ if(!u||u.id==null) continue; qs=qs.map(q=>q.id===u.id?Object.assign({},q,u):q); let hit=false; qsLite=qsLite.map(q=>q.id===u.id?(hit=true,Object.assign({},q,{answer:u.answer,applied:u.applied})):q); if(!hit) qsLite.push({id:u.id,answer:u.answer,applied:u.applied}); } }
+function mergeQs(upd){ dataSeq++; for(const u of upd){ if(!u||u.id==null) continue; qs=qs.map(q=>q.id===u.id?Object.assign({},q,u):q); let hit=false; qsLite=qsLite.map(q=>q.id===u.id?(hit=true,Object.assign({},q,{answer:u.answer,applied:u.applied})):q); if(!hit) qsLite.push({id:u.id,answer:u.answer,applied:u.applied}); } }
 let loadedOnce=false, lastOkAt=null, lastErr=null, seq=0, ctrl=null, composing=false, lastSnap="";
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -198,10 +202,12 @@ async function load(force){
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
     pcs={}; for(const p of p1) if(p.pc_id) pcs[p.pc_id]=p;
     const seen=new Set(); live=a.concat(b).filter(r=>!seen.has(r.id)&&seen.add(r.id));
-    if(force){ histAt=0; qsAt=0; }                             // 수동 새로고침·충돌 때는 90일·질문도 다시
+    const bIds=new Set(b.map(r=>r.id)); hist=hist.filter(r=>!(isHumanNeeded(r)&&!bIds.has(r.id)));   // B 가 이 집합의 정답
+    if(force){ details.clear(); qsAt=0; }                     // 수동 새로고침·충돌 때 큰 글 캐시는 버린다(남이 고친 메모가 남아 덮어쓰는 사고 방지)
     rebuildRows(); qsLite=q1; loadedOnce=true; lastOkAt=new Date(); lastErr=null;
+    const qk=a2=>a2.map(q=>q.id+":"+(q.answer?1:0)+(q.applied?1:0)).sort().join("|"); if(qs.length && qk(qsLite)!==qk(qs)) qsAt=0;   // 새 질문·남의 답이 보이면 본문도 다시
     if(force || nReasonsSrv===null) refreshBacklogCount();
-    if(force && !histFresh()) ensureHist();                     // 첫 로드·수동 새로고침 때 90일 목록 1회 — 배지를 정확히(주문 단위·완주 제외)
+    if(hist.length===0 && !histBusy) ensureHist();              // 90일 목록은 **페이지당 1회**(첫 로드) — 배지를 주문 단위로 정확히. 새로고침·충돌엔 안 받는다
     $("#hubTag").textContent="허브 연결됨 · 최근 "+LIVE_DAYS+"일 "+live.length+"건 · 질문 "+qsLite.length+" · "+hhmm(lastOkAt); $("#hubTag").className="tag ok";
     const pcList=[...new Set(rows.map(pcOf))].sort(); const sel=$("#pcFilter"); const cur=sel.value;
     sel.innerHTML='<option value="">전체</option>'+pcList.map(p=>`<option value="${esc(p)}" ${p===cur?"selected":""}>${esc(p)}</option>`).join("");
@@ -210,20 +216,23 @@ async function load(force){
   render(!force);
 }
 // 사유 백로그 개수만 (본문 0바이트) — 90일 데이터를 안 받은 상태의 배지용
-async function refreshBacklogCount(){ try{ const n=await count("order_reports?select=id&result=eq."+enc("실패")+"&human_reason_cat=is.null&human_action=is.null&created_at=gte."+enc(isoDaysAgo(WINDOW_DAYS))+"&category=not.in.("+[...NOT_LEARNABLE].map(enc).join(",")+")"); nReasonsSrv=n; if(hist.length===0) $("#nReasons").textContent=n; }catch(e){} }
+async function refreshBacklogCount(){ try{ const n=await count("order_reports?select=id&result=eq."+enc("실패")+"&human_reason_cat=is.null&human_action=is.null&created_at=gte."+enc(isoDaysAgo(WINDOW_DAYS))+"&category=not.in.("+[...NOT_LEARNABLE].map(x=>enc('"'+x+'"')).join(",")+")"); nReasonsSrv=n; if(hist.length===0) $("#nReasons").textContent=n; }catch(e){} }
 // 90일 목록(컬럼만) — 백로그·교정 반영·일별 통계·지난 날짜 현황을 열 때만. 10분 캐시. 저장은 머지로 반영되므로 재조회 없음.
-async function ensureHist(){ if(histBusy || Date.now()-histAt<HIST_TTL) return; histBusy=true;
-  try{ const r=await get("order_reports?select="+COLS+"&created_at=gte."+enc(isoDaysAgo(WINDOW_DAYS))+"&order=id.desc"); hist=r; histAt=Date.now(); rebuildRows(); render(true); }
+async function ensureHist(){ if(histBusy || Date.now()-histAt<HIST_TTL) return; histBusy=true; const my=dataSeq;
+  try{ const r=await get("order_reports?select="+COLS+"&created_at=gte."+enc(isoDaysAgo(WINDOW_DAYS))+"&order=id.desc", sig(TIMEOUT_MS*3)); if(my!==dataSeq) return; hist=r; histAt=Date.now(); rebuildRows(); render(true); }
   catch(e){ toast("90일 데이터 불러오기 실패: "+errText(e),true) } finally{ histBusy=false; } }
 // 질문 본문 — 미답변 질문·교정 반영 탭을 열 때만
 async function ensureQs(){ if(qsBusy || Date.now()-qsAt<HIST_TTL) return; qsBusy=true;
-  try{ qs=await get("questions?select="+QCOLS+"&order=id.desc"); qsAt=Date.now(); render(true); }
+  try{ const r=await get("questions?select="+QCOLS+"&order=id.desc", sig(TIMEOUT_MS)); qs=r; qsAt=Date.now(); render(true); }
   catch(e){ toast("질문 불러오기 실패: "+errText(e),true) } finally{ qsBusy=false; } }
 // 카드에 보이는 행의 큰 글(왜 실패했나·에러 원문·주소 근거) — 그 행들만, 한 번 받으면 캐시
-async function ensureDetails(ids){ const need=ids.filter(id=>!details.has(id)); if(!need.length || detailsBusy) return; detailsBusy=true;
-  try{ for(let i=0;i<need.length;i+=100){ const chunk=need.slice(i,i+100); const r=await get("order_reports?select="+DETAIL_COLS+"&id=in.("+chunk.join(",")+")"); for(const d of r){ const {id,...rest}=d; details.set(id,rest); } for(const id of chunk) if(!details.has(id)) details.set(id,{}); } render(true); }
+async function ensureDetails(ids){ const need=ids.filter(id=>!details.has(id)); if(!need.length || detailsBusy) return; detailsBusy=true; const my=dataSeq;
+  try{ for(let i=0;i<need.length;i+=100){ const chunk=need.slice(i,i+100); const r=await get("order_reports?select="+DETAIL_COLS+"&id=in.("+chunk.join(",")+")", sig(TIMEOUT_MS)); if(my!==dataSeq) return; for(const d of r){ const {id,...rest}=d; details.set(id,rest); } for(const id of chunk) if(!details.has(id)) details.set(id,{}); } render(true); }
   catch(e){} finally{ detailsBusy=false; } }
-const histFresh = () => hist.length>0 && Date.now()-histAt<HIST_TTL*3;   // 30분 넘으면 다시 (새로고침 없이 오래 켜둔 탭)
+const histFresh = () => hist.length>0 && Date.now()-histAt<HIST_TTL;     // 10분 캐시 (탭을 다시 열면 그때 갱신)
+// 충돌(0행) 때는 그 주문만 다시 받는다 — 90일 전량 재조회 금지
+async function reloadOrder(orderId){ try{ const r=await get("order_reports?select="+COLS+","+DETAIL_COLS.replace(/^id,/,"")+"&order_id=eq."+enc(orderId), sig(TIMEOUT_MS)); dataSeq++; for(const u of r){ const d={}; for(const k of DETAIL_COLS.split(",")) if(k!=="id"&&k in u) d[k]=u[k]; details.set(u.id,d); } mergeRows(r); }catch(e){} render(false); }
+async function reloadQ(id){ try{ const r=await get("questions?select="+QCOLS+"&id=eq."+id, sig(TIMEOUT_MS)); mergeQs(r); }catch(e){} render(false); }
 function counts(){
   const f=filtered(), today=todayStr();
   // 처리 판정은 **주문 단위** — 어느 시도행에든 담당자 입력이 있으면 그 주문은 처리된 것
@@ -345,9 +354,10 @@ function storeLabel(r){ const s=(r.store||"").trim(); if(s) return `<b style="co
 //   시킨 사람 위치 · 내가 검색한 것(위치검색어→주소, 브랜드→지점) · 정확히 뭘 시켰는지 · 와우패스/배민 주문번호를 이름 붙여서)
 function addrFail(r){ const m=(r.reason||"").match(/사다리 소진\)?:\s*\[(.*?)\]/); return m? m[1] : "" }
 function head(r0){ const r=full(r0); const day=dayOf(r), st=(Object.prototype.hasOwnProperty.call(STATE_KO,r.state)?STATE_KO[r.state]:(r.state||""));
-  const where = r.addr_query||r.addr_picked ? `“${esc(r.addr_query||"?")}” 로 검색 → <b>${esc(r.addr_picked||"?")}</b> 고름`
+  const pending = !details.has(r.id);
+  const where = pending ? `<span class="muted">불러오는 중…</span>` : r.addr_query||r.addr_picked ? `“${esc(r.addr_query||"?")}” 로 검색 → <b>${esc(r.addr_picked||"?")}</b> 고름`
               : (addrFail(r)? `<span class="tag fail">위치 못 찾음</span> 시도한 검색어: ${esc(addrFail(r))}` : (r.addr_query===undefined||r.addr_query===null? `<span class="muted">(기록 없음 — 이 칸이 생기기 전 주문)</span>` : `<span class="tag fail">위치 단계 전 실패</span> ${esc(r.category||"")}`));
-  const storeLine = (r.store||"").trim() ? `“${esc((r.store_query||r.brand||"").replace(/\s*\(후보.*$/,""))}” 로 검색 → <b>${esc(r.store)}</b>${/후보/.test(r.store_query||"")?` <span class="muted">(${esc((r.store_query.match(/\((.*?)\)/)||[])[1]||"")})</span>`:""}`
+  const storeLine = pending ? `<span class="muted">불러오는 중…</span>` : (r.store||"").trim() ? `“${esc((r.store_query||r.brand||"").replace(/\s*\(후보.*$/,""))}” 로 검색 → <b>${esc(r.store)}</b>${/후보/.test(r.store_query||"")?` <span class="muted">(${esc((r.store_query.match(/\((.*?)\)/)||[])[1]||"")})</span>`:""}`
               : `<span class="tag fail">지점 미확정</span> 매장에 들어가기 전(${esc(r.category||"주소/매장 검색")})에 실패`;
   return `<div class="head"><b>${esc(r.brand)}</b> ${storeLabel(r)} ${day&&day!==todayStr()?`<span class="tag need">${esc(day)}</span>`:""} ${st?`<span class="tag ${r.state==="human_needed"?"need":""}">${esc(st)}${r.attempts?` ${esc(r.attempts)}회`:""}</span>`:""} ${PARTIAL(r)?'<span class="tag part">음료만 남음</span>':""}</div>
   ${r.ai_explain?`<div class="explain">🤖 <b>왜 실패했나 (AI)</b> — ${esc(r.ai_explain).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")}</div>`:(details.has(r.id)?"":`<div class="explain muted">🤖 설명 불러오는 중…</div>`)}
@@ -375,31 +385,33 @@ function cardQ(q){ const id=Number(q.id); return `<div class="card" id="q-${id}"
 async function done(id){ const r=byId(id); if(!r) return; if(!needName()) return;
   if(!confirm(`[주문완료] ${r.order_id} · ${r.brand} · ${r.hotel||""}\n이 주문이 배민에 들어갔습니까?`)) return;
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_action=is.null",{human_action:"주문완료",human_by:me(),human_note:(($("#note-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),state:"human_done"});
-    if(!upd.length){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 새로고침했습니다",true); await load(true); }
+    if(!upd.length){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 이 주문을 다시 불러왔습니다",true); await reloadOrder(r.order_id); }
     else { toast("주문완료 기록됨 — 어드민 매핑은 실전 전환 전까지 채팅으로 AI 에게 요청"); mergeRows(upd); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 async function fail(id){ const r=byId(id); if(!r) return; if(!needName()) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요 (필수)");
   if(!confirm(`[주문실패] ${r.order_id} · ${r.brand} · ${r.hotel||""}\n사유: ${cat}\n정말 주문실패로 기록할까요? (어드민 취소·환불 단계로 넘어갑니다)`)) return;
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_action=is.null",{human_action:"주문실패",human_by:me(),human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_note:(($("#fnote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString(),state:"human_failed"});
-    if(!upd.length){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 새로고침했습니다",true); await load(true); }
+    if(!upd.length){ toast("이미 다른 담당자가 처리했거나 건이 사라짐 — 이 주문을 다시 불러왔습니다",true); await reloadOrder(r.order_id); }
     else { toast("주문실패 + 사유 기록됨 — 어드민 취소는 실전 전환 전까지 직접/채팅으로"); mergeRows(upd); refreshBacklogCount(); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 async function saveReason(id){ const r=byId(id); if(!r) return; if(!needName()) return; const cat=(($("#rc-"+id)||{}).value||""); if(!cat) return toast("사유 분류를 골라주세요");
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&human_reason_cat=is.null",{human_reason_cat:cat,who_wrong:WHO[cat]||"AI",human_by:me(),human_note:(($("#fnote-"+id)||{}).value||"").trim()||null,human_at:new Date().toISOString()});
-    if(!upd.length){ toast("이미 다른 담당자가 사유를 달았습니다 — 새로고침했습니다",true); await load(true); }
+    if(!upd.length){ toast("이미 다른 담당자가 사유를 달았습니다 — 이 주문을 다시 불러왔습니다",true); await reloadOrder(r.order_id); }
     else { toast("사유 저장 — [교정 반영] 탭에서 수정할 수 있습니다"); mergeRows(upd); refreshBacklogCount(); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 // ★ 저장 후 수정 (주인님 2026-09-06): 고치면 learned/applied 를 되돌려 AI 가 **다시 학습**하게 한다. 잠금 없이 주문 단위로 덮어쓴다.
 async function editReason(id){ const r0=byId(id); if(!r0) return; const r=full(r0); if(!needName()) return;
-  const cat=(($("#erc-"+id)||{}).value||""), note=(($("#enote-"+id)||{}).value||"").trim();
-  if(cat===(r.human_reason_cat||"") && note===(r.human_note||"")) return toast("바뀐 내용이 없습니다");
-  // 사유를 비우면 메모만 고친다(사유·틀린쪽은 그대로). 잠금: 내가 본 human_at 그대로일 때만 — 남이 먼저 고쳤으면 0행
-  const body={human_by:me(),human_note:note||null,human_at:new Date().toISOString(),learned:false};
+  if(!details.has(id)) return toast("메모를 아직 불러오는 중입니다 — 잠시 후 다시 눌러주세요");   // 메모(상세)가 없는 채로 저장하면 기존 메모가 지워진다
+  const cat=(($("#erc-"+id)||{}).value||""), noteDirty=dirty.has("enote-"+id), note=(($("#enote-"+id)||{}).value||"").trim();
+  if(cat===(r.human_reason_cat||"") && (!noteDirty || note===(r.human_note||""))) return toast("바뀐 내용이 없습니다");
+  // 사유를 비우면 메모만 고친다(사유·틀린쪽은 그대로). 메모는 **손댔을 때만** 보낸다. 잠금: 내가 본 human_at 그대로일 때만 — 남이 먼저 고쳤으면 0행
+  const body={human_by:me(),human_at:new Date().toISOString(),learned:false};
+  if(noteDirty) body.human_note=note||null;
   if(cat){ body.human_reason_cat=cat; body.who_wrong=WHO[cat]||"AI"; }
   const lock = r.human_at? "&human_at=eq."+enc(r.human_at) : "&human_at=is.null";
   try{ const upd=await patch("order_reports","order_id=eq."+enc(r.order_id)+"&or=(human_reason_cat.not.is.null,human_action.not.is.null)"+lock, body);
     dirty.clear();
-    if(!upd.length){ toast("다른 담당자가 먼저 고쳤습니다 — 새로고침했습니다",true); await load(true); }
+    if(!upd.length){ toast("다른 담당자가 먼저 고쳤습니다 — 이 주문을 다시 불러왔습니다",true); await reloadOrder(r.order_id); }
     else { toast("수정 저장 — AI 가 다시 학습합니다(반영 표시 해제)"); mergeRows(upd); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 async function editAnswer(id){ if(!needName()) return; const q=qs.find(x=>x.id===id); if(!q) return; const a=((($("#eans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
@@ -407,14 +419,14 @@ async function editAnswer(id){ if(!needName()) return; const q=qs.find(x=>x.id==
   const lock = q.edited_at? "&edited_at=eq."+enc(q.edited_at) : "&edited_at=is.null";
   try{ const upd=await patch("questions","id=eq."+id+lock,{answer:a,answered_by:me(),edited_at:new Date().toISOString(),applied:false});
     dirty.clear();
-    if(!upd.length){ toast("다른 담당자가 먼저 고쳤습니다 — 새로고침했습니다",true); await load(true); }
+    if(!upd.length){ toast("다른 담당자가 먼저 고쳤습니다 — 이 질문을 다시 불러왔습니다",true); await reloadQ(id); }
     else { toast("답 수정 — AI 가 다시 반영합니다"); mergeQs(upd); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
-function editReasonBox(r0){ const r=full(r0); const id=Number(r.id); const known=REASONS.some(([v])=>v===r.human_reason_cat);
+function editReasonBox(r0){ const r=full(r0); const id=Number(r.id); if(!details.has(id)) return `<div class="row small muted">메모 불러오는 중…</div>`; const known=REASONS.some(([v])=>v===r.human_reason_cat);
   return `<div class="row"><select id="erc-${id}"><option value="" ${known?"":"selected"}>${r.human_reason_cat&&!known?`(현재: ${esc(r.human_reason_cat)})`:"(사유 없음 — 메모만)"}</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===r.human_reason_cat?"selected":""}>${l}</option>`).join("")}</select><input id="enote-${id}" type="text" value="${esc(r.human_note||"")}" placeholder="한 줄"><button class="ok" onclick="editReason(${id})">수정 저장</button></div>` }
 async function answer(id){ if(!needName()) return; const a=((($("#ans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
   try{ const upd=await patch("questions","id=eq."+id+"&answer=is.null",{answer:a,answered_by:me(),answered_at:new Date().toISOString()});
-    if(!upd.length){ toast("이미 다른 담당자가 답했습니다 — 새로고침했습니다",true); await load(true); }
+    if(!upd.length){ toast("이미 다른 담당자가 답했습니다 — 이 질문을 다시 불러왔습니다",true); await reloadQ(id); }
     else { toast("답 저장 — AI 가 다음날 반영"); mergeQs(upd); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 
