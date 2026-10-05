@@ -350,6 +350,9 @@ function liveStrip(){ const ps=myPcs(); if(!ps.length) return scoped()? `<div cl
         +detailBlock(p.current_detail)
         +(canTake? (taking? `<div style="margin-left:22px"><span class="tag need">개입 요청됨 — AI 멈춤. 폰 A 로 이어서 주문하고 아래 카드에서 주문완료/실패를 저장하세요</span> <button class="small" onclick="resumeAI('${esc(p.pc_id)}')">AI 재개(취소)</button></div>`
                              : `<div style="margin-left:22px"><button class="bad small" onclick="takeover('${esc(p.pc_id)}','${esc(p.current_order)}')">수기 배달로 넘기기</button> <span class="small muted">AI 가 헤매면 — 지금 화면 그대로 멈추고 담당자가 폰 A 로 이어서</span></div>`) : ""); }
+    // 2026-10-05: 주문이 없을 때 발송기가 current_step 에 '주문 받기 방식' 을 싣는다(전체 / 지정 주문만 / 꺼짐 / 멈춤) — 새 주문을 AI 가 받는지 바로 보이게
+    else if(p.current_step){ const off=/꺼짐|멈춤|받지 않는/.test(p.current_step);
+      s=`<span class="tag ${off?"need":"ok"}">${off?"AI 주문 안 받는 중":"대기 중"}</span> ${esc(p.current_step)}`; }
     else s=`<span class="tag ok">대기 중</span> 다음 주문 준비`;
     return `<div><span class="muted">🤖 ${esc(p.pc_id)}${p.monitor?` (${esc(p.monitor)})`:""}</span> — ${s}${writeLine(p)}</div>`; });
   return `<div class="card" style="background:#12161f"><b class="small muted">AI 가 지금 하는 일</b>${items.join("")}</div>`; }
@@ -405,6 +408,11 @@ function opsCards(f){
       cards.push(opsCard(`어드민 반영 막힘 — ${who}`,
         `${esc(bits.join(" · "))}${p.write_blocked_reason?` <span class="muted">· ${esc(whyText(p))}</span>`:""}${staleNote}`,
         "배민 주문번호·상태가 어드민에 기록되지 않는 중입니다. 위 로그인·접속을 풀어주시면 자동으로 이어서 반영됩니다 (막힌 동안 AI 는 새 주문을 시작하지 않습니다)."));
+    }
+    // ④-0 AI 는 켜져 있지만 새 주문을 받지 않는 방식(꺼짐·멈춤·지정 주문 끝) — 고장이 아니라 **지금 새 주문은 사람 몫** 이라는 안내 (2026-10-05)
+    if(p.batch_alive && !stale && !p.current_order && p.current_step && /꺼짐|멈춤|받지 않는/.test(p.current_step)){
+      cards.push(opsCard(`AI 가 새 주문을 받지 않는 중 — ${who}`, esc(p.current_step),
+        "AI 는 정상이고 어드민 연결도 확인하고 있습니다. 지금 들어오는 주문은 담당자가 직접 처리해 주세요. 다시 받게 하려면 AI 에게 알려주세요."));
     }
     // ④ AI 멈춤 — 배치가 꺼졌거나 소식이 끊겼다. batch_alive 는 ===false 만(옛 허브의 undefined 는 '모름')
     if(p.batch_alive===false || stale){
