@@ -46,6 +46,7 @@
   <span class="tag" id="hubTag">허브 연결 중…</span>
   <div class="who">
     <span class="small">👤 <b id="meName">—</b> <button id="meChange" class="small" style="padding:2px 8px">바꾸기</button></span>
+    <span id="authBox" class="small" style="display:inline-flex;gap:6px;align-items:center"><button id="authBtn" class="small" style="padding:2px 10px">로그인</button></span>
     <label class="small">PC <select id="pcFilter"><option value="">전체</option></select></label>
     <button id="refresh">새로고침</button>
     <a href="guide.html" target="_blank" class="tag" style="text-decoration:none;padding:6px 10px">📘 가이드</a>
@@ -75,6 +76,15 @@
   <input id="gateName" type="text" placeholder="이름 (예: 홍길동)" autocomplete="off">
   <select id="gatePc" style="width:100%;margin-bottom:10px"><option value="">내 PC (선택 — 현황에 이름을 붙이려면 골라주세요)</option></select>
   <button class="ok" id="gateOk">시작하기</button>
+</div></div>
+<div id="loginGate" style="position:fixed;inset:0;background:rgba(10,12,16,.92);display:none;place-items:center;z-index:60"><div class="box" style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;width:min(420px,92vw)">
+  <h2 id="lgTitle" style="margin:0 0 8px">로그인</h2>
+  <p id="lgHelp" class="small muted" style="margin:0 0 12px">받은 이메일·비밀번호로 로그인하세요. 로그인하면 오늘의 코드가 보이고, 내 PC 것만 따로 볼 수 있습니다.</p>
+  <input id="lgEmail" type="email" placeholder="이메일" autocomplete="username" style="width:100%;font-size:16px;padding:10px 12px;margin-bottom:10px">
+  <input id="lgPw" type="password" placeholder="비밀번호" autocomplete="current-password" style="width:100%;font-size:16px;padding:10px 12px;margin-bottom:10px">
+  <input id="lgPw2" type="password" placeholder="새 비밀번호 확인" autocomplete="new-password" style="width:100%;font-size:16px;padding:10px 12px;margin-bottom:10px;display:none">
+  <div style="display:flex;gap:8px"><button class="ok" id="lgOk" style="flex:1;padding:10px">로그인</button><button id="lgCancel" style="padding:10px 14px">닫기</button></div>
+  <div id="lgErr" class="small" style="color:#ffb3b3;margin-top:8px"></div>
 </div></div>
 <script>
 // ── 허브 접속 (publishable 키 = Supabase 가 "공개해도 안전" 으로 명시한 공개용 키. 비밀키 아님) ──
@@ -150,6 +160,61 @@ const enc=encodeURIComponent;
 let ME="", MYPC="", pcs={};                      // pcs: {pc_id: monitor} — PC↔담당자 짝 (허브 pcs 표)
 try{ ME=(localStorage.getItem("me")||"").trim(); MYPC=(localStorage.getItem("mypc")||"").trim(); }catch(e){}
 const me=()=>ME||"담당자";
+// ── 로그인 (Supabase Auth, 2026-10-05) — 사장님: "담당자는 자기 것만, 전체 보기는 지정된 사람만. 서버가 막는 진짜 로그인으로."
+//   · 로그인 전에는 지금까지처럼 공개 키로 전부 보인다(전환 전 병행 기간). 로그인하면 사용자 토큰으로 조회 → 서버 RLS 가 범위를 정한다.
+//   · 역할: manager = 전체 보기 가능 / monitor = 피드백 탭(실패 사유·질문)은 전부, PC 상태·운영 알림·지금 할 일은 오늘 짝이 된 PC 만.
+//   · 짝: [오늘 코드] 6자리(10분)를 자기 PC 의 Claude 에게 말하면 그날 그 PC 와 묶인다(pairings).
+let AUTH=null, ROLE="", MYPCS=[], VIEWALL=false;
+try{ AUTH=JSON.parse(localStorage.getItem("auth")||"null"); VIEWALL=localStorage.getItem("viewall")==="1"; }catch(e){}
+function setAuthHeader(){ H.Authorization="Bearer "+((AUTH&&AUTH.access_token)||HUB_KEY); }
+setAuthHeader();
+async function authPost(path, body, token){ const r=await fetch(HUB_URL+"/auth/v1/"+path,{method:path==="user"?"PUT":"POST",headers:{"apikey":HUB_KEY,"Content-Type":"application/json","Authorization":"Bearer "+(token||HUB_KEY)},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error_description||j.msg||j.message||("오류 "+r.status)); return j; }
+function saveAuth(j){ AUTH={access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Date.now()+((j.expires_in||3600)*1000),uid:(j.user||{}).id||(AUTH||{}).uid,email:(j.user||{}).email||(AUTH||{}).email};
+  try{localStorage.setItem("auth",JSON.stringify(AUTH))}catch(e){} setAuthHeader(); }
+async function refreshAuth(){ if(!AUTH||AUTH.expires_at-Date.now()>10*60000) return;
+  try{ saveAuth(await authPost("token?grant_type=refresh_token",{refresh_token:AUTH.refresh_token})); }catch(e){ doLogout(true); toast("로그인이 만료됐습니다 — 다시 로그인해 주세요",true); } }
+async function loadProfile(){ if(!AUTH) return;
+  try{ const op=await get("operators?select=name,role&user_id=eq."+AUTH.uid);
+    if(!op.length){ toast("등록된 담당자가 아닙니다 — 관리자에게 문의",true); doLogout(true); return; }
+    ROLE=op[0].role; ME=op[0].name; try{localStorage.setItem("me",ME)}catch(e){}
+    const pr=await get("pairings?select=pc_id&user_id=eq."+AUTH.uid+"&day=eq."+todayStr()); MYPCS=pr.map(x=>x.pc_id); MYPC=MYPCS[0]||"";
+  }catch(e){ toast("프로필 조회 실패: "+errText(e),true); }
+  paintMe(); paintAuth(); }
+function doLogout(silent){ AUTH=null; ROLE=""; MYPCS=[]; VIEWALL=false; try{localStorage.removeItem("auth");localStorage.removeItem("viewall")}catch(e){} setAuthHeader(); paintAuth(); if(!silent) toast("로그아웃했습니다"); load(true); }
+const isMgr=()=>ROLE==="manager";
+// 개인화 범위: 로그인했고 전체 보기가 아니면 '내 PC' 만. (로그인 전 = 예전처럼 전부)
+const scoped=()=>!!AUTH && !(isMgr()&&VIEWALL);
+const minePc=pc=>!scoped()||MYPCS.includes(pc);
+function myPcs(){ return Object.values(pcs).filter(p=>minePc(p.pc_id)); }
+function paintAuth(){ const box=$("#authBox"); if(!box) return;
+  if(!AUTH){ box.innerHTML=`<button id="authBtn" class="small" style="padding:2px 10px">로그인</button>`; $("#authBtn").onclick=()=>openLogin("login"); $("#meChange").style.display=""; return; }
+  $("#meChange").style.display="none";
+  box.innerHTML=`<span class="tag ${isMgr()?"need":"ok"}">${isMgr()?"마스터":"담당자"}</span>`
+    +`<span class="tag" title="오늘 짝이 된 PC">${MYPCS.length?("PC "+esc(MYPCS.join(","))):"PC 짝 없음"}</span>`
+    +`<button id="codeBtn" class="small" style="padding:2px 8px" title="내 PC 의 Claude 에게 알려줄 오늘의 코드">오늘 코드</button>`
+    +(isMgr()?`<label class="small" style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" id="viewAll" ${VIEWALL?"checked":""}>전체 보기</label>`:"")
+    +`<button id="pwBtn" class="small" style="padding:2px 8px">비밀번호</button><button id="outBtn" class="small" style="padding:2px 8px">로그아웃</button>`;
+  $("#codeBtn").onclick=showPairCode; $("#pwBtn").onclick=()=>openLogin("pw"); $("#outBtn").onclick=()=>doLogout(false);
+  const va=$("#viewAll"); if(va) va.onchange=()=>{ VIEWALL=va.checked; try{localStorage.setItem("viewall",VIEWALL?"1":"0")}catch(e){} render(false); }; }
+let lgMode="login";
+function openLogin(mode){ lgMode=mode; $("#lgErr").textContent=""; $("#lgPw").value=""; $("#lgPw2").value="";
+  const pw=mode==="pw"; $("#lgTitle").textContent=pw?"비밀번호 변경":"로그인"; $("#lgEmail").style.display=pw?"none":""; $("#lgPw2").style.display=pw?"":"none";
+  $("#lgPw").placeholder=pw?"새 비밀번호 (8자 이상)":"비밀번호"; $("#lgOk").textContent=pw?"변경":"로그인";
+  $("#lgHelp").textContent=pw?"새 비밀번호를 두 번 적어 주세요.":"받은 이메일·비밀번호로 로그인하세요. 로그인하면 오늘의 코드가 보이고, 내 PC 것만 따로 볼 수 있습니다.";
+  $("#loginGate").style.display="grid"; setTimeout(()=>(pw?$("#lgPw"):$("#lgEmail")).focus(),50); }
+async function submitLogin(){ const err=m=>{$("#lgErr").textContent=m};
+  try{ if(lgMode==="pw"){ const p=$("#lgPw").value, p2=$("#lgPw2").value; if(p.length<8) return err("8자 이상으로 적어 주세요"); if(p!==p2) return err("두 칸이 다릅니다");
+      await refreshAuth(); await authPost("user",{password:p},AUTH.access_token); $("#loginGate").style.display="none"; toast("비밀번호를 바꿨습니다"); return; }
+    const em=($("#lgEmail").value||"").trim(), p=$("#lgPw").value; if(!em||!p) return err("이메일과 비밀번호를 적어 주세요");
+    saveAuth(await authPost("token?grant_type=password",{email:em,password:p})); $("#loginGate").style.display="none"; $("#gate").style.display="none"; setInert(false);
+    await loadProfile(); load(true); toast("로그인했습니다 — "+me());
+  }catch(e){ err(/Invalid login/i.test(e.message)?"이메일 또는 비밀번호가 맞지 않습니다":e.message); } }
+async function showPairCode(){ try{ await refreshAuth(); const r=await fetch(HUB_URL+"/rest/v1/rpc/issue_pair_code",{method:"POST",headers:H,body:"{}"}); const c=await r.json(); if(!r.ok) throw new Error(r.status+" "+JSON.stringify(c));
+    $("#codeBtn").outerHTML=`<span class="tag need" style="font-size:15px;font-weight:700;letter-spacing:2px" title="10분 동안 유효 — 내 PC 의 Claude 에게 알려주세요">코드 ${esc(String(c))}</span>`;
+    toast("오늘 코드 "+c+" — 내 PC 의 Claude 에게 알려주세요 (10분 유효)",true);
+    setTimeout(()=>{ loadProfile().then(()=>render(false)); }, 60000); setTimeout(()=>{ loadProfile().then(()=>render(false)); }, 180000);
+  }catch(e){ toast("코드 발급 실패: "+errText(e),true); } }
 function needName(){ if(ME) return true; showGate(); toast("담당자 이름을 먼저 적어주세요"); return false; }
 function setInert(on){ for(const sel of ["main","header","nav"]){ const el=document.querySelector(sel); if(el) el.inert=on; } }
 function showGate(){ $("#gateName").value=ME; const sel=$("#gatePc"); const cur=MYPC;
@@ -251,7 +316,7 @@ function alertStuck(bad){
 // 전역 경고 바 — 어느 PC든 막혔으면 탭과 무관하게 띄운다. 막힘이 없으면 숨긴다.
 function paintWriteAlert(){
   const el=document.getElementById("writeAlert"); if(!el) return;
-  const bad=Object.values(pcs).filter(writeStuck);
+  const bad=myPcs().filter(writeStuck);
   alertStuck(bad);
   const t=(bad.length?"⚠ ":"")+document.title.replace(/^⚠ /,"");   // 탭 제목 — 같은 값이면 안 건드린다(idempotent)
   if(document.title!==t) document.title=t;
@@ -272,7 +337,7 @@ function paintWriteAlert(){
              + (pcStale(p)? ` · <b>${esc(ago(p.updated_at))} 전 소식 — 이 PC 와 연결 끊김</b>` : "")+`</span>`; }).join("<br>")
     + (tail.length? `<br><span class="small">${esc(tail.join(" "))}</span>` : "");
   el.style.display="block"; }
-function liveStrip(){ const ps=Object.values(pcs); if(!ps.length) return "";
+function liveStrip(){ const ps=myPcs(); if(!ps.length) return scoped()? `<div class="card small" style="background:#12161f">오늘 짝이 된 PC 가 없습니다 — 위의 <b>[오늘 코드]</b> 를 눌러 나온 6자리를 내 PC 의 Claude 에게 알려주세요. (실패 사유 입력·미답변 질문은 짝 없이도 그대로 할 수 있습니다)</div>` : "";
   const items=ps.map(p=>{ const stale=pcStale(p);                  // '연결 끊김' 눈금은 SESS_STALE_MS 하나로 통일(2026-09-23)
     let s; if(stale) s=`<span class="tag fail">연결 끊김</span> ${ago(p.updated_at)} 전 소식`;
     else if(!p.batch_alive) s=`<span class="tag">배치 꺼짐</span>`;
@@ -315,7 +380,7 @@ const opsCard = (title, detail, act) => `<div class="banner"><b>⛔ ${title}</b>
   + `<div class="small" style="margin-top:4px">👉 ${esc(act)}</div></div>`;
 function opsCards(f){
   const cards=[];
-  for(const p of Object.values(pcs)){
+  for(const p of myPcs()){
     const who=`<b>${esc(p.pc_id)}</b>${p.monitor?` <span class="muted">(${esc(p.monitor)})</span>`:""}`;
     const m=minsSince(p.admin_session_at), stale=pcStale(p);
     const staleNote = stale? ` · <b>${esc(ago(p.updated_at))} 전 소식 — 이 PC 와 연결 끊김</b>` : "";
@@ -392,6 +457,7 @@ function latestPerOrder(list){ const seen=new Set(), out=[]; for(const r of list
 const byId = id => rows.find(r=>r.id===id);
 
 async function load(force){
+  await refreshAuth();
   const my=++seq; if(ctrl) ctrl.abort(); ctrl=new AbortController(); const sig=ctrl.signal; const to=setTimeout(()=>ctrl.abort(), TIMEOUT_MS);
   try{
     // A) 최근 3일 전체  B) 사람 몫(파킹·매장취소·부분) — 날짜 무관 (todo 계약: 어제 파킹건도 보여야 한다)
@@ -442,7 +508,7 @@ function counts(){
   const solved=new Set(f.filter(r=>r.result==="완주"&&!PARTIAL(r)).map(r=>r.order_id));   // 부분(음료 빠짐)은 아직 일
   const latest=latestPerOrder(f);
   // 지금 할 일 = AI 가 손 뗀 것만 (파킹·매장취소·부분). AI 재시도 중(ai_failed)은 이중주문 위험이라 안 띄움. 날짜 무관(어제 파킹건도)
-  const todo=latest.filter(r=>!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r)));
+  const todo=latest.filter(r=>minePc(pcOf(r))&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r)));
   // 사유 입력 = 학습이 되는 실패 중 사유 없는 것 (백로그 — 틈날 때)
   const reasons=latest.filter(r=>r.result==="실패"&&!labeled.has(r.order_id)&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&!NOT_LEARNABLE.has(r.category||""));
   $("#nTodo").textContent=todo.length; $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
@@ -702,7 +768,10 @@ $("#refresh").onclick=()=>load(true); $("#pcFilter").onchange=()=>render(false);
 document.addEventListener("compositionstart",()=>composing=true); document.addEventListener("compositionend",()=>composing=false);
 $("#gateOk").onclick=commitGate; $("#gateName").addEventListener("keydown",e=>{ if(e.key==="Enter") commitGate(); });
 $("#meChange").onclick=showGate;
-paintMe(); if(!ME) showGate();                       // 세션(이름) 없으면 먼저 받는다 — 데이터는 뒤에서 미리 불러온다
+$("#lgOk").onclick=submitLogin; $("#lgCancel").onclick=()=>{ $("#loginGate").style.display="none"; };
+["lgEmail","lgPw","lgPw2"].forEach(id=>$("#"+id).addEventListener("keydown",e=>{ if(e.key==="Enter") submitLogin(); }));
+paintAuth(); if(AUTH) loadProfile().then(()=>render(false));
+paintMe(); if(!ME && !AUTH) showGate();                       // 세션(이름) 없으면 먼저 받는다 — 데이터는 뒤에서 미리 불러온다
 load(true); setInterval(()=>{ if(document.visibilityState==="hidden") return; load(false); }, POLL_MS);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") load(false); });
 </script>
