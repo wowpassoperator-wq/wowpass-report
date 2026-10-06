@@ -466,6 +466,7 @@ function latestPerOrder(list){ const seen=new Set(), out=[]; for(const r of list
 const byId = id => rows.find(r=>r.id===id);
 
 let liveOrders=[], liveErr=null;
+function opDay(){ return localDay(new Date(Date.now()-4*3600*1000)); }   // 영업일: 새벽 4시 전은 어제(배달·사진이 자정을 넘긴다)
 // 실주문 탭 — 주문별 단계 시각(시:분:초)과 지금 상태 (주인님 2026-10-06: "어디까지 됐는지 한눈에")
 function hms(iso){ if(!iso) return ""; const d=new Date(iso); return isNaN(d)?"":String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+":"+String(d.getSeconds()).padStart(2,"0"); }
 const LIVE_COLOR = {"사진전송":"var(--ok)","배달완료":"#9fd0ff","배달중":"#ffd166","매핑됨":"#ffd166","결제됨":"#ffd166","결제직전":"#ffd166","진행중":"#ffd166","사진없음":"var(--bad)","멈춤":"var(--bad)"};
@@ -474,7 +475,7 @@ function liveTab(){
   const cnt={}; rows.forEach(r=>cnt[r.state]=(cnt[r.state]||0)+1);
   const step=(t,label)=>t?`<div class="nw"><span class="muted small">${label}</span> <b>${hms(t)}</b></div>`:`<div class="nw muted small">${label} —</div>`;
   const gap=(a,b)=>{ if(!a||!b) return ""; const s=Math.round((new Date(b)-new Date(a))/1000); return s>=0?` <span class="muted small">(+${s>=60?Math.floor(s/60)+"분 ":""}${s%60}초)</span>`:""; };
-  let html=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">오늘 실주문 ${rows.length}건</b> ${Object.entries(cnt).map(([k,v])=>`<span class="tag" style="border-color:${LIVE_COLOR[k]||"inherit"}">${esc(k)} ${v}</span>`).join(" ")} <span class="muted small">· 60초마다 PC 가 올림 · 시각은 초 단위</span></div>`;
+  let html=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">${esc(opDay())} 실주문 ${rows.length}건</b> ${Object.entries(cnt).map(([k,v])=>`<span class="tag" style="border-color:${LIVE_COLOR[k]||"inherit"}">${esc(k)} ${v}</span>`).join(" ")} <span class="muted small">· 60초마다 PC 가 올림 · 시각은 초 단위</span></div>`;
   if(liveErr) html+=`<div class="card"><b>실주문 표를 못 읽음</b> <span class="small muted">${esc(liveErr)}</span><div class="small muted">허브에 live_orders 표가 없으면 Supabase SQL Editor 에서 scripts/hub/hub_schema_live.sql 을 실행해야 합니다.</div></div>`;
   if(!rows.length) return html+`<div class="empty">오늘 AI 가 진행한 실주문이 아직 없습니다</div>`;
   html+=`<div class="card" style="overflow-x:auto"><table class="wide"><tr><th>와우패스</th><th>브랜드 · 매장</th><th>숙소</th><th>메뉴</th><th>배민 주문번호</th><th>시작</th><th>결제</th><th>어드민 매핑</th><th>배달 중</th><th>배달 완료</th><th>사진</th><th>상태</th></tr>`;
@@ -497,7 +498,7 @@ async function load(force){
       get("questions?select=id,answer,applied&order=id.desc", sig),
       get("pcs?select=*", sig).catch(()=>[])]);
     // 실주문 단계 표(live_orders) — 표가 아직 없으면(hub_schema_live.sql 미실행) 조용히 빈 배열
-    try{ liveOrders=await get("live_orders?select=*&started_at=gte."+enc(todayStr()+"T00:00:00+09:00")+"&order=started_at.desc", sig); liveErr=null; }catch(e){ liveOrders=[]; liveErr=errText(e); }
+    try{ liveOrders=await get("live_orders?select=*&started_at=gte."+enc(opDay()+"T00:00:00+09:00")+"&order=started_at.desc", sig); liveErr=null; }catch(e){ liveOrders=[]; liveErr=errText(e); }
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
     pcs={}; for(const p of p1) if(p.pc_id) pcs[p.pc_id]=p;
     const seen=new Set(); live=a.concat(b).filter(r=>!seen.has(r.id)&&seen.add(r.id));
