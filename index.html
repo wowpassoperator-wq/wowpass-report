@@ -62,6 +62,7 @@
 <nav>
   <button data-tab="todo" class="on">지금 할 일 <span id="nTodo" class="tag need">0</span></button>
   <button data-tab="today">오늘 현황</button>
+  <button data-tab="live">실주문 <span id="nLive" class="tag">0</span></button>
   <button data-tab="daily">일별 통계</button>
   <button data-tab="reasons">실패 사유 입력 <span id="nReasons" class="tag">0</span></button>
   <button data-tab="questions">미답변 질문 <span id="nQ" class="tag">0</span></button>
@@ -464,6 +465,27 @@ function filtered(){const pc=$("#pcFilter").value;return rows.filter(r=>!pc||pcO
 function latestPerOrder(list){ const seen=new Set(), out=[]; for(const r of list){ if(seen.has(r.order_id)) continue; seen.add(r.order_id); out.push(r);} return out }
 const byId = id => rows.find(r=>r.id===id);
 
+let liveOrders=[], liveErr=null;
+// 실주문 탭 — 주문별 단계 시각(시:분:초)과 지금 상태 (주인님 2026-10-06: "어디까지 됐는지 한눈에")
+function hms(iso){ if(!iso) return ""; const d=new Date(iso); return isNaN(d)?"":String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+":"+String(d.getSeconds()).padStart(2,"0"); }
+const LIVE_COLOR = {"사진전송":"var(--ok)","배달완료":"#9fd0ff","배달중":"#ffd166","매핑됨":"#ffd166","결제됨":"#ffd166","결제직전":"#ffd166","진행중":"#ffd166","사진없음":"var(--bad)","멈춤":"var(--bad)"};
+function liveTab(){
+  const rows=liveOrders.filter(r=>minePc(r.pc_id));
+  const cnt={}; rows.forEach(r=>cnt[r.state]=(cnt[r.state]||0)+1);
+  const step=(t,label)=>t?`<div class="nw"><span class="muted small">${label}</span> <b>${hms(t)}</b></div>`:`<div class="nw muted small">${label} —</div>`;
+  const gap=(a,b)=>{ if(!a||!b) return ""; const s=Math.round((new Date(b)-new Date(a))/1000); return s>=0?` <span class="muted small">(+${s>=60?Math.floor(s/60)+"분 ":""}${s%60}초)</span>`:""; };
+  let html=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">오늘 실주문 ${rows.length}건</b> ${Object.entries(cnt).map(([k,v])=>`<span class="tag" style="border-color:${LIVE_COLOR[k]||"inherit"}">${esc(k)} ${v}</span>`).join(" ")} <span class="muted small">· 60초마다 PC 가 올림 · 시각은 초 단위</span></div>`;
+  if(liveErr) html+=`<div class="card"><b>실주문 표를 못 읽음</b> <span class="small muted">${esc(liveErr)}</span><div class="small muted">허브에 live_orders 표가 없으면 Supabase SQL Editor 에서 scripts/hub/hub_schema_live.sql 을 실행해야 합니다.</div></div>`;
+  if(!rows.length) return html+`<div class="empty">오늘 AI 가 진행한 실주문이 아직 없습니다</div>`;
+  html+=`<div class="card" style="overflow-x:auto"><table class="wide"><tr><th>와우패스</th><th>브랜드 · 매장</th><th>숙소</th><th>메뉴</th><th>배민 주문번호</th><th>시작</th><th>결제</th><th>어드민 매핑</th><th>배달 중</th><th>배달 완료</th><th>사진</th><th>상태</th></tr>`;
+  for(const r of rows){
+    const st=r.state||""; const note=[r.manual?"담당자 직접 주문":"", r.stop_reason||"", r.photo_note||""].filter(Boolean).join(" · ");
+    html+=`<tr><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand||"")}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel||"")}</td><td class="small">${esc(r.menu||"")}</td><td class="nw small">${esc(r.baemin_no||"")}</td>
+      <td class="nw">${hms(r.started_at)||"—"}</td><td class="nw">${hms(r.paid_at)||"—"}${gap(r.started_at,r.paid_at)}</td><td class="nw">${hms(r.mapped_at)||"—"}${gap(r.paid_at,r.mapped_at)}</td><td class="nw">${hms(r.moved_at)||"—"}</td><td class="nw">${hms(r.done_at)||"—"}${gap(r.paid_at,r.done_at)}</td><td class="nw">${hms(r.photo_at)||"—"}${gap(r.done_at,r.photo_at)}</td>
+      <td class="nw"><b style="color:${LIVE_COLOR[st]||"inherit"}">${esc(st)}</b>${note?`<div class="small muted" style="max-width:260px;white-space:normal">${esc(note)}</div>`:""}</td></tr>`;
+  }
+  return html+`</table></div><div class="small muted" style="margin-top:8px">단계: 시작 → 결제(0원 상품권) → 어드민 매핑(매장·배민번호·접수 완료) → 배달 중 → 배달 완료 → 사진 전송(알림센터 사진을 어드민 [푸시 보내기]). 괄호는 앞 단계부터 걸린 시간.</div>`;
+}
 async function load(force){
   await refreshAuth();
   const my=++seq; if(ctrl) ctrl.abort(); ctrl=new AbortController(); const sig=ctrl.signal; const to=setTimeout(()=>ctrl.abort(), TIMEOUT_MS);
@@ -474,6 +496,8 @@ async function load(force){
       get("order_reports?select="+COLS+"&human_action=is.null&or=(state.eq.human_needed,state.eq.store_cancelled,state.eq.human_takeover,category.eq."+enc("음료단품없음(부분)")+")&order=id.desc", sig),
       get("questions?select=id,answer,applied&order=id.desc", sig),
       get("pcs?select=*", sig).catch(()=>[])]);
+    // 실주문 단계 표(live_orders) — 표가 아직 없으면(hub_schema_live.sql 미실행) 조용히 빈 배열
+    try{ liveOrders=await get("live_orders?select=*&started_at=gte."+enc(todayStr()+"T00:00:00+09:00")+"&order=started_at.desc", sig); liveErr=null; }catch(e){ liveOrders=[]; liveErr=errText(e); }
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
     pcs={}; for(const p of p1) if(p.pc_id) pcs[p.pc_id]=p;
     const seen=new Set(); live=a.concat(b).filter(r=>!seen.has(r.id)&&seen.add(r.id));
@@ -519,7 +543,7 @@ function counts(){
   const todo=latest.filter(r=>minePc(pcOf(r))&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r)));
   // 사유 입력 = 학습이 되는 실패 중 사유 없는 것 (백로그 — 틈날 때)
   const reasons=latest.filter(r=>r.result==="실패"&&!labeled.has(r.order_id)&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&!NOT_LEARNABLE.has(r.category||""));
-  $("#nTodo").textContent=todo.length; $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
+  $("#nTodo").textContent=todo.length; try{ $("#nLive").textContent=liveOrders.filter(r=>minePc(r.pc_id)&&!["사진전송","사진없음"].includes(r.state)).length; }catch(e){} $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
   if(loadedOnce) notifyNew(todo);
   return {f,today,todo,reasons,latest};
 }
@@ -573,6 +597,7 @@ function render(auto){
     <div class="card" style="overflow-x:auto"><table class="wide"><tr><th>날짜 · 시작 → 종료 · 소요</th><th>담당자 (PC)</th><th>와우패스 주문번호</th><th>브랜드 · 지점</th><th>시킨 사람 위치</th><th>주문 내용</th><th>결과</th><th>분류</th><th>담당자 입력</th></tr>
     ${t.slice(0,400).map(r=>`<tr><td class="nw">${whenCell(r)}</td><td class="nw">${esc(whoOf(r)||"—")} <span class="muted small">(${esc(pcOf(r))})</span></td><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand)}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel)}</td><td class="small">${esc(r.menu)}</td><td class="nw">${resultTag(r)}</td><td class="small nw">${esc(r.category||"")}</td><td class="small">${r.human_action?`<b>${esc(r.human_action)}</b> `:""}${esc(r.human_reason_cat||"")}${r.human_by?` <span class="muted">(${esc(r.human_by)})</span>`:""}</td></tr>`).join("")}</table></div>`;
   }
+  else if(tab==="live"){ html+=liveStrip()+liveTab(); }
   else if(tab==="daily"){
     // 일별 통계 (주인님 2026-09-08: "일자별 주문/실패/성공률/실패 유형") — 주문 단위로 센다(같은 주문 여러 시도 = 1)
     const days=dailyStats(f);
