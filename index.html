@@ -695,14 +695,29 @@ function head(r0){ const r=full(r0); const day=dayOf(r), st=(Object.prototype.ha
     <dt>실패</dt><dd><span class="tag fail">${esc(r.category||"미분류")}</span> <span class="muted">${esc(r.reason||"")}</span></dd>
   </dl>` }
 // 사유 드롭다운 — AI 추천 분류(suggest_cat)가 있으면 기본 선택 (담당자는 틀리면 바꾸기만)
-function reasonSelect(id, suggested){return `<select id="rc-${id}"><option value="">사유 분류 선택 (필수)</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===suggested?"selected":""}>${l}${v===suggested?" (AI 추천)":""}</option>`).join("")}</select>`}
+// ★ 사유 분류별 '한 줄' 입력 형식 안내 (주인님 2026-10-07: "실패 사유 구분에 따라 받아야 하는 형식·예시를 넣으면 더 정확하게 입력하지 않을까")
+//   AI(apply_feedback.py)가 그대로 읽는 형식: 메뉴는 '어드민메뉴=배민이름', 지점은 '@지점명', 주소는 '주소=…' 또는 '호텔=…'. 여러 개는 쉼표.
+const NOTE_HINT = {
+  "매장없음":      ["되는 지점이 있으면 @지점명", "예: @BHC 합정점  (여러 곳이면 쉼표)"],
+  "매장에메뉴없음": ["그 지점에서 쓰는 이름을 어드민메뉴=배민이름 으로", "예: 콰삭킹=콰삭킹 콤보  /  정말 없으면: 없음"],
+  "이름다름":      ["어드민메뉴=배민이름", "예: 레허반반순살=반반순살[레드+허니], 공깃밥=공기밥"],
+  "최소주문":      ["금액이 어떻게 달랐는지", "예: 최소주문 15,000원 미달  /  배민가 23,000 vs 받은 22,000"],
+  "주소AI실패":    ["배민에서 찾아지는 검색어를 주소=… 또는 호텔=…", "예: 호텔=동대문 뉴 호스텔  /  주소=서울 종로구 종로46길 23"],
+  "주소주문자오류": ["손님이 적은 주소의 무엇이 틀렸는지(학습 제외)", "예: 호수 누락 / 도로명이 다른 구"],
+  "주문자오류":    ["손님 주문의 무엇이 틀렸는지(학습 제외)", "예: 메뉴명 오타 '콤보' → 실제는 '콤보 ×2 없음'"],
+  "기타":          ["한 줄로 상황 설명", "예: 매장 전화로 확인 — 재료 소진"],
+};
+function noteHint(cat){ const h=NOTE_HINT[cat]; return h? h[0]+" — "+h[1] : "사유를 먼저 고르면 형식 안내가 나옵니다"; }
+function setHint(sel, noteId){ const inp=document.getElementById(noteId); if(inp){ inp.placeholder=noteHint(sel.value); } const d=document.getElementById("hint-"+noteId); if(d){ const h=NOTE_HINT[sel.value]; d.innerHTML=h?`<b>${esc(h[0])}</b> · <span class="muted">${esc(h[1])}</span>`:""; } }
+function hintLine(noteId, cat){ const h=NOTE_HINT[cat]; return `<div id="hint-${noteId}" class="small" style="margin:-4px 0 6px 2px">${h?`<b>${esc(h[0])}</b> · <span class="muted">${esc(h[1])}</span>`:""}</div>`; }
+function reasonSelect(id, suggested, noteId){return `<select id="rc-${id}" ${noteId?`onchange="setHint(this,'${noteId}')"`:""}><option value="">사유 분류 선택 (필수)</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===suggested?"selected":""}>${l}${v===suggested?" (AI 추천)":""}</option>`).join("")}</select>`}
 function cardTodo(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}
   <div class="row"><span class="small muted">${r.state==="human_takeover"?"<b>개입한 주문</b> — 폰 A 화면을 이어서 주문한 뒤:":PARTIAL(r)?"디바이스 A 로 <b>음료만</b> 추가 주문 후:":"담당자가 디바이스 A 로 직접 주문 후:"}</span>
     <button class="ok" onclick="done(${id})">주문완료</button>
     <input id="note-${id}" type="text" placeholder="(선택) OO점에서 됨 / 검색은 XX로">
   </div>
-  <div class="row">${reasonSelect(id, r.suggest_cat)}<input id="fnote-${id}" type="text" placeholder="(기타면) 한 줄"><button class="bad" onclick="fail(${id})">주문실패</button></div></div>`}
-function cardReason(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}<div class="row">${reasonSelect(id, r.suggest_cat)}<input id="fnote-${id}" type="text" placeholder="한 줄 (배민 이름 / 되는 지점 / 주문자 오류 등)"><button class="ok" onclick="saveReason(${id})">저장</button></div></div>`}
+  <div class="row">${reasonSelect(id, r.suggest_cat, "fnote-"+id)}<input id="fnote-${id}" type="text" placeholder="${esc(noteHint(r.suggest_cat))}"><button class="bad" onclick="fail(${id})">주문실패</button></div>${hintLine("fnote-"+id, r.suggest_cat)}</div>`}
+function cardReason(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}<div class="row">${reasonSelect(id, r.suggest_cat, "fnote-"+id)}<input id="fnote-${id}" type="text" placeholder="${esc(noteHint(r.suggest_cat))}"><button class="ok" onclick="saveReason(${id})">저장</button></div>${hintLine("fnote-"+id, r.suggest_cat)}</div>`}
 // ★ 오늘 현황 줄 (사장님 2026-10-05: "실패 사유 입력·미답변 질문 탭에는 그날그날 오늘 몇 개 했는지") — 오늘 00:00 이후 입력만, 담당자별로
 function todayBar(kind, f){
   const t0=todayStr(); const isToday=iso=> iso && localDay(new Date(iso))===t0;
@@ -801,7 +816,7 @@ async function editAnswer(id){ if(!needName()) return; const q=qs.find(x=>x.id==
     else { toast("답 수정 — AI 가 다시 반영합니다"); mergeQs(upd); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
 function editReasonBox(r0){ const r=full(r0); const id=Number(r.id); if(!details.has(id)) return `<div class="row small muted">메모 불러오는 중…</div>`; const known=REASONS.some(([v])=>v===r.human_reason_cat);
-  return `<div class="row"><select id="erc-${id}"><option value="" ${known?"":"selected"}>${r.human_reason_cat&&!known?`(현재: ${esc(r.human_reason_cat)})`:"(사유 없음 — 메모만)"}</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===r.human_reason_cat?"selected":""}>${l}</option>`).join("")}</select><input id="enote-${id}" type="text" value="${esc(r.human_note||"")}" placeholder="한 줄"><button class="ok" onclick="editReason(${id})">수정 저장</button></div>` }
+  return `<div class="row"><select id="erc-${id}" onchange="setHint(this,'enote-${id}')"><option value="" ${known?"":"selected"}>${r.human_reason_cat&&!known?`(현재: ${esc(r.human_reason_cat)})`:"(사유 없음 — 메모만)"}</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===r.human_reason_cat?"selected":""}>${l}</option>`).join("")}</select><input id="enote-${id}" type="text" value="${esc(r.human_note||"")}" placeholder="${esc(noteHint(r.human_reason_cat))}"><button class="ok" onclick="editReason(${id})">수정 저장</button></div>${hintLine("enote-"+id, r.human_reason_cat)}` }
 async function answer(id){ if(!needName()) return; const a=((($("#ans-"+id)||{}).value)||"").trim(); if(!a) return toast("답을 적어주세요");
   try{ const upd=await patch("questions","id=eq."+id+"&answer=is.null",{answer:a,answered_by:me(),answered_at:new Date().toISOString()});
     if(!upd.length){ toast("이미 다른 담당자가 답했습니다 — 이 질문을 다시 불러왔습니다",true); await reloadQ(id); }
