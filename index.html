@@ -589,16 +589,24 @@ function render(auto){
     // 날짜 선택 (주인님 2026-09-06: "현황에 날짜도") — 기본 오늘, 다른 날도 볼 수 있게
     const day=viewDay||today;
     const t=f.filter(r=>dayOf(r)===day);
-    const done=t.filter(r=>r.result==="완주"&&!PARTIAL(r)).length, part=t.filter(PARTIAL).length, fail=t.filter(r=>r.result==="실패").length;
-    const cats=new Map(); t.filter(r=>r.result==="실패").forEach(r=>{const k=r.category||"(미분류)";cats.set(k,(cats.get(k)||0)+1)});
+    // 주인님 2026-10-07: "오늘의 현황에 연습과 실주문이 나눠서" — 실주문 표(live_orders)에 있는 주문번호는 실주문, 나머지는 연습
+    const liveIds=new Set(liveOrders.filter(r=>liveDayOf(r)===day).map(r=>String(r.order_id)));
+    const tLive=t.filter(r=>liveIds.has(String(r.order_id))), tPrac=t.filter(r=>!liveIds.has(String(r.order_id)));
     const byPc=new Map(); t.forEach(r=>{const p=pcOf(r); byPc.set(p,(byPc.get(p)||0)+1)});
     const w=new Date(day+"T00:00:00"); const wd=["일","월","화","수","목","금","토"][isNaN(w)?0:w.getDay()];
     html+=liveStrip()+`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">${esc(day)} (${wd})</b> <input type="date" id="viewDay" value="${esc(day)}" max="${today}" style="padding:4px 8px"> <button class="small" id="viewToday">오늘</button>
-      <span class="muted small">· PC별 담당자: ${[...byPc.entries()].map(([p,n])=>`<b>${esc(p)}</b> ${esc((pcs[p]||{}).monitor||"(이름 없음)")} ${n}건`).join(" · ")||"—"}</span></div>
+      <span class="muted small">· PC별 담당자: ${[...byPc.entries()].map(([p,n])=>`<b>${esc(p)}</b> ${esc((pcs[p]||{}).monitor||"(이름 없음)")} ${n}건`).join(" · ")||"—"}</span></div>`;
+    const section=(title,t,color)=>{
+      const done=t.filter(r=>r.result==="완주"&&!PARTIAL(r)).length, part=t.filter(PARTIAL).length, fail=t.filter(r=>r.result==="실패").length;
+      const cats=new Map(); t.filter(r=>r.result==="실패").forEach(r=>{const k=r.category||"(미분류)";cats.set(k,(cats.get(k)||0)+1)});
+      return `<h3 style="margin:14px 0 6px;color:${color}">${title} <span class="muted small">${t.length}시도 · 주문 ${new Set(t.map(r=>r.order_id)).size}건</span></h3>
     <div class="kpi"><div><b>${t.length}</b>시도</div><div><b style="color:var(--ok)">${done}</b>완주</div>${part?`<div><b style="color:#9fd0ff">${part}</b>부분(음료 빠짐)</div>`:""}<div><b style="color:var(--bad)">${fail}</b>실패</div><div><b>${t.length?Math.round(100*done/t.length):0}%</b>완주율(시도 기준)</div><div><b>${new Set(t.map(r=>r.order_id)).size}</b>주문 수</div></div>
     <div class="card"><b>실패 분류</b><div class="row">${[...cats.entries()].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="tag fail">${esc(k)} ${esc(v)}</span>`).join("")||'<span class="muted">없음</span>'}</div></div>
     <div class="card" style="overflow-x:auto"><table class="wide"><tr><th>날짜 · 시작 → 종료 · 소요</th><th>담당자 (PC)</th><th>와우패스 주문번호</th><th>브랜드 · 지점</th><th>시킨 사람 위치</th><th>주문 내용</th><th>결과</th><th>분류</th><th>담당자 입력</th></tr>
     ${t.slice(0,400).map(r=>`<tr><td class="nw">${whenCell(r)}</td><td class="nw">${esc(whoOf(r)||"—")} <span class="muted small">(${esc(pcOf(r))})</span></td><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand)}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel)}</td><td class="small">${esc(r.menu)}</td><td class="nw">${resultTag(r)}</td><td class="small nw">${esc(r.category||"")}</td><td class="small">${r.human_action?`<b>${esc(r.human_action)}</b> `:""}${esc(r.human_reason_cat||"")}${r.human_by?` <span class="muted">(${esc(r.human_by)})</span>`:""}</td></tr>`).join("")}</table></div>`;
+    };
+    if(liveIds.size || tLive.length){ html+=section("🟢 실주문 (손님 주문 — 결제·배달까지)", tLive, "var(--ok)"); html+=section("🧪 연습 (결제 없음 — 학습용)", tPrac, "var(--muted,#9aa)"); }
+    else html+=section("전체 (이 날은 실주문 표가 없어 나누지 못함)", t, "inherit");
   }
   else if(tab==="live"){ html+=liveStrip()+liveTab(); }
   else if(tab==="daily"){
