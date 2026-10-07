@@ -621,6 +621,7 @@ function render(auto){
     ${days.map(d=>`<tr><td class="nw"><a href="#" onclick="viewDay='${esc(d.day)}';tab='today';render(false);return false" style="color:var(--fg)"><b>${esc(d.day)}</b> <span class="muted">(${d.wd})</span></a></td><td><b>${d.orders}</b></td><td class="muted">${d.tries}</td><td style="color:var(--ok)"><b>${d.done}</b></td><td style="color:#9fd0ff">${d.part||""}</td><td style="color:var(--bad)"><b>${d.fail}</b></td><td class="nw"><b>${d.orders?Math.round(100*d.done/d.orders):0}%</b></td><td class="small">${[...d.cats.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v])=>`<span class="tag fail">${esc(k)} ${v}</span>`).join(" ")}${d.cats.size>5?` <span class="muted">외 ${d.cats.size-5}종</span>`:""}</td><td class="nw">${d.human||""}</td><td class="small nw">${[...d.pcs.entries()].map(([p,n])=>`${esc((pcs[p]||{}).monitor||"—")} <span class="muted">(${esc(p)} ${n})</span>`).join("<br>")}</td></tr>`).join("")}</table></div>`;
   }
   else if(tab==="reasons"){ const list=reasons.slice(0,200); ensureDetails(list.map(r=>r.id));
+    html+=reasonDailyTable(f);
     html += todayBar("reason", f);
     html += list.length? list.map(cardReason).join("") : (hist.length? `<div class="empty">사유를 기다리는 실패건이 없습니다</div>` : ``); }
   else if(tab==="questions"){ const open=qs.filter(q=>!q.answer);
@@ -732,6 +733,20 @@ function todayBar(kind, f){
   return `<div class="card" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:10px 14px"><b style="font-size:18px">${label} ${total}건</b><span class="small muted">내 입력 <b>${mine}</b>건</span>${people?`<span class="small">${people}</span>`:`<span class="small muted">아직 오늘 입력이 없습니다</span>`}<span class="small muted" style="margin-left:auto">자세한 건 [입력 현황] 탭</span></div>`; }
 // ★ 입력 현황 (사장님 2026-10-05): 담당자별로 오늘·7일·30일 동안 사유 입력·주문완료/실패·질문 답을 몇 건 했는지 — 담당자 스스로 보고 더 하게.
 //   ⛔ 새 쿼리 없음 — 이미 받아온 rows(90일)·qs 만 센다(egress 계약). 주문은 **주문 단위**(같은 주문에 여러 시도행이 있어도 1).
+// ★ 날짜별·담당자별 사유 입력 수 (주인님 2026-10-07: "실패사유 입력 그날그날 몇 개를 답변했는지 볼 수 있게, 등록 담당자 이름도 — 모니터링이 되니까")
+//   사유 분류가 달린 시도행의 human_at 날짜 × human_by. 최근 14일, 오늘이 맨 위. 주문완료/실패 버튼(human_action)도 같은 사람 몫이라 괄호로 함께.
+function reasonDailyTable(f){
+  const days={}, people=new Set();
+  for(const r of f){ const iso=r.human_at; if(!iso) continue; const who=(r.human_by||"").trim()||"(이름 없음)"; const d=localDay(new Date(iso)); if(isNaN(new Date(iso))) continue;
+    const row=days[d]||(days[d]={}); const c=row[who]||(row[who]={r:0,a:0}); if(r.human_reason_cat) c.r++; if(r.human_action) c.a++; people.add(who); }
+  const cols=[...people].sort(); const list=Object.keys(days).sort().reverse().slice(0,14);
+  if(!list.length) return `<div class="card small muted">아직 사유 입력 기록이 없습니다</div>`;
+  const cell=c=>c?`<b>${c.r}</b>${c.a?`<span class="muted small"> (+버튼 ${c.a})</span>`:""}`:`<span class="muted">·</span>`;
+  return `<div class="card" style="overflow-x:auto"><b>날짜별 사유 입력 수</b> <span class="small muted">— 담당자별 · 최근 14일 · 굵은 숫자 = 사유 입력, 괄호 = 주문완료/실패 버튼</span>
+    <table class="wide" style="margin-top:6px"><tr><th>날짜</th>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}<th>합계</th></tr>
+    ${list.map(d=>{ const row=days[d]; const tot=Object.values(row).reduce((a,c)=>a+c.r,0); const w=["일","월","화","수","목","금","토"][new Date(d+"T00:00:00").getDay()];
+      return `<tr${d===todayStr()?' style="background:#12161f"':''}><td class="nw">${esc(d)} <span class="muted small">(${w})</span></td>${cols.map(c=>`<td class="nw">${cell(row[c])}</td>`).join("")}<td class="nw"><b>${tot}</b></td></tr>`; }).join("")}</table></div>`;
+}
 function peopleTab(f){
   const now=Date.now(), day=86400000, t0=todayStr();
   const inWin=(iso,days)=> iso && (now-new Date(iso).getTime())<days*day;
