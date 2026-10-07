@@ -38,6 +38,7 @@
   #gate .box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 28px;width:min(92vw,420px)}
   #gate h2{margin:0 0 6px;font-size:18px}#gate p{margin:0 0 14px;color:var(--dim);font-size:13px}
   #gate input{width:100%;font-size:16px;padding:10px 12px;margin-bottom:10px}#gate button{width:100%;padding:10px}
+input[type="date"]{color-scheme:dark;}   /* 달력 아이콘이 검게 나와 안 보이던 것(주인님 2026-10-07) */
 </style>
 </head>
 <body>
@@ -606,7 +607,8 @@ function render(auto){
     <div class="card" style="overflow-x:auto"><table class="wide"><tr><th>날짜 · 시작 → 종료 · 소요</th><th>담당자 (PC)</th><th>와우패스 주문번호</th><th>브랜드 · 지점</th><th>시킨 사람 위치</th><th>주문 내용</th><th>결과</th><th>분류</th><th>담당자 입력</th></tr>
     ${t.slice(0,400).map(r=>`<tr><td class="nw">${whenCell(r)}</td><td class="nw">${esc(whoOf(r)||"—")} <span class="muted small">(${esc(pcOf(r))})</span></td><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand)}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel)}</td><td class="small">${esc(r.menu)}</td><td class="nw">${resultTag(r)}</td><td class="small nw">${esc(r.category||"")}</td><td class="small">${r.human_action?`<b>${esc(r.human_action)}</b> `:""}${esc(r.human_reason_cat||"")}${r.human_by?` <span class="muted">(${esc(r.human_by)})</span>`:""}</td></tr>`).join("")}</table></div>`;
     };
-    if(liveIds.size || tLive.length){ html+=section("🟢 실주문 (손님 주문 — 결제·배달까지)", tLive, "var(--ok)"); html+=section("🧪 연습 (결제 없음 — 학습용)", tPrac, "var(--muted,#9aa)"); }
+    const coveredByLive = day >= localDay(new Date(Date.now()-8*86400*1000));     // 실주문 표(live_orders)가 덮는 기간이면 0건이어도 나눠서
+    if(liveIds.size || tLive.length || coveredByLive){ html+=section("🟢 실주문 (손님 주문 — 결제·배달까지)", tLive, "var(--ok)"); html+=section("🧪 연습 (결제 없음 — 학습용)", tPrac, "var(--muted,#9aa)"); }
     else html+=section("전체 (이 날은 실주문 표가 없어 나누지 못함)", t, "inherit");
   }
   else if(tab==="live"){ html+=liveStrip()+liveTab(); }
