@@ -66,7 +66,7 @@
   <button data-tab="daily">일별 통계</button>
   <button data-tab="reasons">실패 사유 입력 <span id="nReasons" class="tag">0</span></button>
   <button data-tab="questions">미답변 질문 <span id="nQ" class="tag">0</span></button>
-  <button data-tab="learned">교정 반영</button>
+  <button data-tab="learned">교정 반영 <span id="nLearned" class="tag need" title="오늘 담당자가 넣은 교정(사유·메모) 수">0</span></button>
   <button data-tab="people">입력 현황</button>
 </nav>
 <main id="main"><div class="empty">허브에서 불러오는 중…</div></main>
@@ -546,6 +546,8 @@ function counts(){
   const todo=latest.filter(r=>minePc(pcOf(r))&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r)));
   // 사유 입력 = 학습이 되는 실패 중 사유 없는 것 (백로그 — 틈날 때)
   const reasons=latest.filter(r=>r.result==="실패"&&!labeled.has(r.order_id)&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&!NOT_LEARNABLE.has(r.category||""));
+  // 주인님 2026-10-07: 교정 반영 탭에 그날 교정 들어간 숫자를 실시간(60초 갱신)으로, 빨간 배경 배지
+  try{ const t0=todayStr(); $("#nLearned").textContent=latestPerOrder(f.filter(r=>(r.human_reason_cat||r.human_action)&&r.human_at&&localDay(new Date(r.human_at))===t0)).length; }catch(e){}
   $("#nTodo").textContent=todo.length; try{ $("#nLive").textContent=liveOrders.filter(r=>minePc(r.pc_id)&&liveDayOf(r)===opDay()&&!["사진전송","사진없음"].includes(r.state)).length; }catch(e){} $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
   if(loadedOnce) notifyNew(todo);
   return {f,today,todo,reasons,latest};
