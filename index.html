@@ -639,16 +639,16 @@ function render(auto){
     const sel=learnedDay===""?(days.includes(todayStr())?todayStr():"all"):learnedDay;
     const labeledDay=sel==="all"?labeledAll:labeledAll.filter(r=>dayOfIn(r)===sel);
     const labeled=labeledDay.filter(r=>noteKind(r)!=="none");                                 // 배울 내용 없는 입력은 이 탭에 없다(사유 기록은 그대로)
-    const applied=labeled.filter(r=>r.learned), badFmt=labeled.filter(r=>noteKind(r)==="bad"), pend=labeled.filter(r=>noteKind(r)==="pending"); ensureDetails(labeled.slice(0,200).map(r=>r.id));
+    const applied=labeled.filter(r=>r.learned), aiTodo=labeled.filter(r=>noteKind(r)==="ai"), pend=labeled.filter(r=>noteKind(r)==="pending"); ensureDetails(labeled.slice(0,200).map(r=>r.id));
     const who={}; labeled.forEach(r=>{ const k=(r.human_by||"").trim()||"(이름 없음)"; who[k]=(who[k]||0)+1; });
     html+=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">교정 반영</b> <select id="learnedDay" style="padding:4px 8px"><option value="all" ${sel==="all"?"selected":""}>전체 보기</option>${days.map(d=>`<option value="${d}" ${d===sel?"selected":""}>${d}${d===todayStr()?" (오늘)":""}</option>`).join("")}</select>
       <span class="small muted">· 입력: ${Object.entries(who).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<b>${esc(k)}</b> ${v}건`).join(" · ")||"없음"}</span></div>
       <details class="card" style="padding:8px 12px"><summary class="small" style="cursor:pointer">담당자별 집계 (오늘 · 7일 · 30일 · 마지막 입력) — 펼치기</summary><div style="margin-top:8px">${peopleTab(f)}</div></details>`;
-    html+=`<div class="kpi"><div><b>${labeled.length}</b>교정이 적힌 주문</div><div><b style="color:var(--ok)">${applied.length}</b>AI 가 반영함</div><div><b style="color:#ffd166">${pend.length}</b>반영 대기(10분 안)</div><div><b style="color:var(--bad)">${badFmt.length}</b>형식 확인 필요</div><div><b>${qsLite.filter(q=>q.answer).length}</b>답변된 질문</div><div><b style="color:var(--ok)">${qsLite.filter(q=>q.applied).length}</b>반영된 답</div></div>
-    <div class="card muted small">AI 가 <b>10분마다</b> 여기 적힌 교정을 읽어 반영하고, 반영된 건은 초록으로 바뀝니다. 메모 없이 사유만 고른 입력과 '주문자 오류' 는 배울 내용이 없어 여기 올리지 않습니다. <b>형식 확인 필요</b>는 메모가 문장이라 AI 가 못 읽는 것 — 아래 수정 칸에서 형식에 맞게 고쳐 주세요.</div>
+    html+=`<div class="kpi"><div><b>${labeled.length}</b>교정이 적힌 주문</div><div><b style="color:var(--ok)">${applied.length}</b>AI 가 반영함</div><div><b style="color:#ffd166">${pend.length}</b>반영 대기(10분 안)</div><div><b style="color:#9fd0ff">${aiTodo.length}</b>AI 가 코드로 옮길 규칙</div><div><b>${qsLite.filter(q=>q.answer).length}</b>답변된 질문</div><div><b style="color:var(--ok)">${qsLite.filter(q=>q.applied).length}</b>반영된 답</div></div>
+    <div class="card muted small">AI 가 <b>10분마다</b> 여기 적힌 교정을 읽어 반영하고, 반영된 건은 초록으로 바뀝니다. 메모 없이 사유만 고른 입력과 '주문자 오류' 는 배울 내용이 없어 여기 올리지 않습니다. '단순 오류' 같은 메모도 마찬가지. <b>AI 작업 대기</b>는 담당자가 알려 준 옵션·세트 고르는 법처럼 AI 가 주문 코드로 옮겨야 하는 규칙입니다 — 담당자가 다시 적을 필요 없습니다.</div>
     <div class="card muted small">저장한 사유·메모는 여기서 <b>수정</b>할 수 있습니다. 수정하면 "반영" 표시가 풀리고 AI 가 다시 학습합니다.</div>
     ${labeled.slice(0,200).map(r=>`<div class="card" id="c-${Number(r.id)}">
-      <div class="head"><b>${esc(r.brand)}</b> ${storeLabel(r)} <span class="muted">${esc(r.menu)}</span> ${r.learned?'<span class="tag ok">반영됨</span>':(noteKind(r)==="bad"?'<span class="tag" style="border-color:var(--bad);color:var(--bad)">형식 확인 필요 — '+esc((NOTE_HINT[r.human_reason_cat]||["한 줄 형식"])[0])+'</span>':'<span class="tag" style="border-color:#ffd166;color:#ffd166">반영 대기</span>')}</div>
+      <div class="head"><b>${esc(r.brand)}</b> ${storeLabel(r)} <span class="muted">${esc(r.menu)}</span> ${r.learned?'<span class="tag ok">반영됨</span>':(noteKind(r)==="ai"?'<span class="tag" style="border-color:#9fd0ff;color:#9fd0ff">AI 작업 대기 — 옵션·세트 규칙(담당자 할 일 없음)</span>':'<span class="tag" style="border-color:#ffd166;color:#ffd166">반영 대기</span>')}</div>
       <dl class="info">
         <dt>와우패스 주문번호</dt><dd><b>${esc(r.order_id)}</b> <span class="muted">· PC ${esc(pcOf(r))}</span></dd>
         <dt>담당자 입력</dt><dd>${r.human_action?`<b>${esc(r.human_action)}</b> · `:""}${esc(r.human_reason_cat||"(사유 없음)")}${r.who_wrong?` <span class="muted">(틀린 쪽: ${esc(r.who_wrong)})</span>`:""}${r.human_note?` — ${esc(r.human_note)}`:""}</dd>
@@ -830,14 +830,16 @@ async function editAnswer(id){ if(!needName()) return; const q=qs.find(x=>x.id==
     if(!upd.length){ toast("다른 담당자가 먼저 고쳤습니다 — 이 질문을 다시 불러왔습니다",true); await reloadQ(id); }
     else { toast("답 수정 — AI 가 다시 반영합니다"); mergeQs(upd); render(false); }
   }catch(e){ toast("저장 실패: "+errText(e),true) } }
-// ★ 교정 메모가 AI 가 읽을 수 있는 형식인지 — apply_feedback.py 와 같은 규칙(메뉴=이름 / @지점 / X점은 됨 / 배민검색: X / 호텔=·주소=)
+// ★ 교정 메모 분류 (주인님 10/7 20시 지적 — 담당자가 문장으로 알려 준 옵션 규칙은 **AI 가 코드로 옮길 일**이지 담당자가 다시 적을 일이 아니다)
+//   done: 반영됨 · pending: 형식이 맞아 10분 안에 자동 반영 · ai: 옵션·세트 규칙 등 AI 가 코드로 옮길 일(담당자 할 일 없음) · none: 배울 내용 없음(이 탭에 안 올림)
 const NOT_LEARN_CAT = new Set(["주소주문자오류","주문자오류"]);
+const NOTE_NONE = /단순\s*오류|ai\s*오류|영업\s*매장\s*없|가능한\s*매장\s*없|녹화|^없음$/i;
 function noteKind(r){
   const n=(r.human_note||"").trim();
   if(r.learned) return "done";
-  if(!n || NOT_LEARN_CAT.has(r.human_reason_cat||"")) return "none";                       // 배울 내용 없음 — 교정 반영에 올리지 않는다
-  if(/(=>|->|→|=)/.test(n) || /^@\s*\S/.test(n) || /점\s*(은|는)\s*됨/.test(n) || /배민\s*검색\s*[:：]/.test(n) || /^(호텔|주소)\s*=/.test(n)) return "pending";   // 형식 맞음 — 10분 안에 반영
-  return "bad";                                                                              // 메모는 있는데 문장 — 담당자가 형식에 맞게 고쳐야
+  if(!n || NOT_LEARN_CAT.has(r.human_reason_cat||"") || NOTE_NONE.test(n)) return "none";
+  if(/(=>|->|→|=)/.test(n) || /^@\s*\S/.test(n) || /점\s*(은|는)\s*됨/.test(n) || /배민\s*검색\s*[:：]/.test(n) || /^(호텔|주소)\s*=/.test(n)) return "pending";
+  return "ai";
 }
 function editReasonBox(r0){ const r=full(r0); const id=Number(r.id); if(!details.has(id)) return `<div class="row small muted">메모 불러오는 중…</div>`; const known=REASONS.some(([v])=>v===r.human_reason_cat);
   return `<div class="row"><select id="erc-${id}" onchange="setHint(this,'enote-${id}')"><option value="" ${known?"":"selected"}>${r.human_reason_cat&&!known?`(현재: ${esc(r.human_reason_cat)})`:"(사유 없음 — 메모만)"}</option>${REASONS.map(([v,l])=>`<option value="${v}" ${v===r.human_reason_cat?"selected":""}>${l}</option>`).join("")}</select><input id="enote-${id}" type="text" value="${esc(r.human_note||"")}" placeholder="${esc(noteHint(r.human_reason_cat))}"><button class="ok" onclick="editReason(${id})">수정 저장</button></div>${hintLine("enote-"+id, r.human_reason_cat)}` }
