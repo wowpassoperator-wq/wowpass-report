@@ -194,9 +194,11 @@ function paintAuth(){ const box=$("#authBox"); if(!box) return;
   box.innerHTML=`<span class="tag ${isMgr()?"need":"ok"}">${isMgr()?"마스터":"담당자"}</span>`
     +`<span class="tag" title="오늘 짝이 된 PC">${MYPCS.length?("PC "+esc(MYPCS.join(","))):"PC 짝 없음"}</span>`
     +`<button id="codeBtn" class="small" style="padding:2px 8px" title="내 PC 의 Claude 에게 알려줄 오늘의 코드">오늘 코드</button>`
+    +`<button id="voiceBtn" class="small" style="padding:2px 8px" title="실주문 상태가 바뀌면(접수 완료·배달 중·배달 완료·사진 전송) 주문번호와 함께 소리로 읽어 줍니다">${VOICE_ON?"🔊 음성 켬":"🔇 음성 끔"}</button>`
     +(isMgr()?`<label class="small" style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" id="viewAll" ${VIEWALL?"checked":""}>전체 보기</label>`:"")
     +`<button id="pwBtn" class="small" style="padding:2px 8px">비밀번호</button><button id="outBtn" class="small" style="padding:2px 8px">로그아웃</button>`;
   $("#codeBtn").onclick=showPairCode; $("#pwBtn").onclick=()=>openLogin("pw"); $("#outBtn").onclick=()=>doLogout(false);
+  const vb=$("#voiceBtn"); if(vb) vb.onclick=()=>{ VOICE_ON=!VOICE_ON; try{localStorage.setItem("voiceOn",VOICE_ON?"1":"0")}catch(e){} vb.textContent=VOICE_ON?"🔊 음성 켬":"🔇 음성 끔"; if(VOICE_ON) speak("음성 알림을 켰습니다"); };
   const va=$("#viewAll"); if(va) va.onchange=()=>{ VIEWALL=va.checked; try{localStorage.setItem("viewall",VIEWALL?"1":"0")}catch(e){} render(false); }; }
 let lgMode="login";
 function openLogin(mode){ lgMode=mode; $("#lgErr").textContent=""; $("#lgPw").value=""; $("#lgPw2").value="";
@@ -466,6 +468,35 @@ function latestPerOrder(list){ const seen=new Set(), out=[]; for(const r of list
 const byId = id => rows.find(r=>r.id===id);
 
 let liveOrders=[], liveErr=null, liveDay="", learnedDay="";   // liveDay: 실주문 탭에서 보는 영업일(빈값=오늘 영업일)
+// ★ 실주문 상태 변경 음성 알림 (주인님 2026-10-08 20:20: "주문 접수 완료·배달 중·배달 완료·사진 전송 완료를 주문번호와 함께 소리로도 내")
+//   60초 폴링으로 받은 live_orders 의 state 가 바뀐 주문(오늘 영업일·내 PC)을 브라우저 음성(ko-KR)으로 읽는다. 첫 로드는 기준만 잡고 조용히.
+let VOICE_ON=true; try{ VOICE_ON=(localStorage.getItem("voiceOn")??"1")==="1"; }catch(e){}
+let prevLive=null;
+const LIVE_SAY={"진행중":"주문 시작","결제직전":"결제 직전","결제됨":"결제 완료","매핑됨":"접수 완료","배달중":"배달 중","배달완료":"배달 완료","사진전송":"사진 전송 완료","사진없음":"사진 없음, 확인 필요","멈춤":"중단, 확인 필요"};
+function speak(t){ if(!VOICE_ON) return; try{ const u=new SpeechSynthesisUtterance(t); u.lang="ko-KR"; u.rate=1.0; speechSynthesis.speak(u); }catch(e){} }
+// ★ 실주문 탭 자동 갱신 (주인님 2026-10-09 19:17: "와우패스 어드민처럼 3초 단위 자동 갱신 / 자동 갱신 중지 버튼") — live_orders 표만 3초마다 읽어 이 탭만 다시 그린다.
+let LIVE_AUTO=false; try{ LIVE_AUTO=localStorage.getItem("liveAuto")==="1"; }catch(e){}
+let liveAutoTimer=null, liveAutoBusy=false;
+async function fetchLive(sig){ return get("live_orders?select=*&started_at=gte."+enc(localDay(new Date(Date.now()-8*86400*1000))+"T00:00:00+09:00")+"&order=started_at.desc", sig); }
+async function liveAutoTick(){
+  if(!LIVE_AUTO || tab!=="live" || document.visibilityState==="hidden" || liveAutoBusy) return;
+  liveAutoBusy=true;
+  try{ liveOrders=await fetchLive(); liveErr=null; try{ announceLive(); }catch(e){} if(tab==="live" && !document.activeElement?.matches?.("input,textarea")) render(false); }
+  catch(e){ liveErr=errText(e); }
+  finally{ liveAutoBusy=false; }
+}
+function setLiveAuto(on){
+  LIVE_AUTO=!!on; try{ localStorage.setItem("liveAuto",LIVE_AUTO?"1":"0"); }catch(e){}
+  if(liveAutoTimer){ clearInterval(liveAutoTimer); liveAutoTimer=null; }
+  if(LIVE_AUTO){ liveAutoTimer=setInterval(liveAutoTick, 3000); liveAutoTick(); }
+  render(false);
+}
+function announceLive(){
+  const cur=new Map();
+  for(const r of liveOrders){ if(liveDayOf(r)!==opDay()) continue; if(!(isMgr()&&VIEWALL) && !minePc(r.pc_id)) continue; cur.set(String(r.order_id), r.state||""); }
+  if(prevLive){ for(const [id,st] of cur){ if(prevLive.get(id)!==st && LIVE_SAY[st]){ const msg=`주문 ${id} ${LIVE_SAY[st]}`; speak(msg); toast("🔔 "+msg,true); } } }
+  prevLive=cur;
+}
 function liveDayOf(r){ return r.started_at? localDay(new Date(new Date(r.started_at)-4*3600*1000)) : ""; }   // 새벽 4시 전 시작은 전날 영업일
 function opDay(){ return localDay(new Date(Date.now()-4*3600*1000)); }   // 영업일: 새벽 4시 전은 어제(배달·사진이 자정을 넘긴다)
 // 실주문 탭 — 주문별 단계 시각(시:분:초)과 지금 상태 (주인님 2026-10-06: "어디까지 됐는지 한눈에")
@@ -477,7 +508,7 @@ function liveTab(){
   const cnt={}; rows.forEach(r=>cnt[r.state]=(cnt[r.state]||0)+1);
   const step=(t,label)=>t?`<div class="nw"><span class="muted small">${label}</span> <b>${hms(t)}</b></div>`:`<div class="nw muted small">${label} —</div>`;
   const gap=(a,b)=>{ if(!a||!b) return ""; const s=Math.round((new Date(b)-new Date(a))/1000); return s>=0?` <span class="muted small">(+${s>=60?Math.floor(s/60)+"분 ":""}${s%60}초)</span>`:""; };
-  let html=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">${esc(day)} 실주문 ${rows.length}건</b> <input type="date" id="liveDay" value="${esc(day)}" max="${opDay()}" style="padding:4px 8px"> <button class="small" id="liveToday">오늘</button> ${Object.entries(cnt).map(([k,v])=>`<span class="tag" style="border-color:${LIVE_COLOR[k]||"inherit"}">${esc(k)} ${v}</span>`).join(" ")} <span class="muted small">· 60초마다 PC 가 올림 · 시각은 초 단위</span></div>`;
+  let html=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">${esc(day)} 실주문 ${rows.length}건</b> <input type="date" id="liveDay" value="${esc(day)}" max="${opDay()}" style="padding:4px 8px"> <button class="small" id="liveToday">오늘</button> <button class="small" id="liveAutoBtn" style="${LIVE_AUTO?"background:#2a5c3a":""}" title="와우패스 어드민처럼 3초마다 이 탭만 새로 읽습니다">${LIVE_AUTO?"⏸ 자동 갱신 중지":"▶ 자동 갱신(3초)"}</button> ${Object.entries(cnt).map(([k,v])=>`<span class="tag" style="border-color:${LIVE_COLOR[k]||"inherit"}">${esc(k)} ${v}</span>`).join(" ")} <span class="muted small">· ${LIVE_AUTO?"3초마다 자동 갱신 중":"60초마다 PC 가 올림"} · 시각은 초 단위</span></div>`;
   if(liveErr) html+=`<div class="card"><b>실주문 표를 못 읽음</b> <span class="small muted">${esc(liveErr)}</span><div class="small muted">허브에 live_orders 표가 없으면 Supabase SQL Editor 에서 scripts/hub/hub_schema_live.sql 을 실행해야 합니다.</div></div>`;
   if(!rows.length) return html+`<div class="empty">${esc(day)} 에 AI 가 진행한 실주문이 없습니다</div>`;
   html+=`<div class="card" style="overflow-x:auto"><table class="wide"><tr><th>와우패스</th><th>브랜드 · 매장</th><th>숙소</th><th>메뉴</th><th>배민 주문번호</th><th>시작</th><th>결제</th><th>어드민 매핑</th><th>배달 중</th><th>배달 완료</th><th>사진</th><th>상태</th></tr>`;
@@ -502,6 +533,7 @@ async function load(force){
     // 실주문 단계 표(live_orders) — 표가 아직 없으면(hub_schema_live.sql 미실행) 조용히 빈 배열
     try{ liveOrders=await get("live_orders?select=*&started_at=gte."+enc(localDay(new Date(Date.now()-8*86400*1000))+"T00:00:00+09:00")+"&order=started_at.desc", sig); liveErr=null; }catch(e){ liveOrders=[]; liveErr=errText(e); }
     if(my!==seq) return;                                       // 더 최근 load 가 있으면 이 응답은 버림
+    try{ announceLive(); }catch(e){}                           // 실주문 상태 변경 음성(주인님 10/08)
     pcs={}; for(const p of p1) if(p.pc_id) pcs[p.pc_id]=p;
     const seen=new Set(); live=a.concat(b).filter(r=>!seen.has(r.id)&&seen.add(r.id));
     const bIds=new Set(b.map(r=>r.id)); hist=hist.filter(r=>!(isHumanNeeded(r)&&!bIds.has(r.id)));   // B 가 이 집합의 정답
@@ -660,6 +692,7 @@ function render(auto){
   const pdv=$("#peopleDay"); if(pdv){ pdv.onchange=()=>{ peopleDay=pdv.value===todayStr()?"":pdv.value; render(false); }; $("#peopleToday").onclick=()=>{ peopleDay=""; render(false); }; }
   const lrn=$("#learnedDay"); if(lrn){ lrn.onchange=()=>{ learnedDay=lrn.value; render(false); }; }
   const ld=$("#liveDay"); if(ld){ ld.onchange=()=>{ liveDay=ld.value===opDay()?"":ld.value; render(false); }; $("#liveToday").onclick=()=>{ liveDay=""; render(false); }; }
+  const ab=$("#liveAutoBtn"); if(ab) ab.onclick=()=>setLiveAuto(!LIVE_AUTO);
   const vd=$("#viewDay"); if(vd){ vd.onchange=()=>{ viewDay=vd.value===todayStr()?"":vd.value; render(false); }; $("#viewToday").onclick=()=>{ viewDay=""; render(false); }; }
 }
 // 일별 집계 — 주문 단위. 한 주문의 그날 시도 중 하나라도 완주면 완주, 완주 없이 부분만 있으면 부분, 둘 다 없으면 실패(유형은 마지막 시도의 분류)
@@ -859,6 +892,7 @@ $("#lgOk").onclick=submitLogin; $("#lgCancel").onclick=()=>{ $("#loginGate").sty
 paintAuth(); if(AUTH) loadProfile().then(()=>render(false));
 paintMe(); if(!ME && !AUTH) showGate();                       // 세션(이름) 없으면 먼저 받는다 — 데이터는 뒤에서 미리 불러온다
 load(true); setInterval(()=>{ if(document.visibilityState==="hidden") return; load(false); }, POLL_MS);
+if(LIVE_AUTO){ liveAutoTimer=setInterval(liveAutoTick, 3000); }   // 지난번에 켜 둔 자동 갱신(localStorage) 복원
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") load(false); });
 </script>
 </body>
