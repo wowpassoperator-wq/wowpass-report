@@ -582,6 +582,20 @@ function counts(){
   const todo=latest.filter(r=>minePc(pcOf(r))&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&(r.state==="human_needed"||r.state==="store_cancelled"||r.state==="human_takeover"||PARTIAL(r)));
   // 사유 입력 = 학습이 되는 실패 중 사유 없는 것 (백로그 — 틈날 때)
   const reasons=latest.filter(r=>r.result==="실패"&&!labeled.has(r.order_id)&&!acted.has(r.order_id)&&!solved.has(r.order_id)&&!NOT_LEARNABLE.has(r.category||""));
+  // ★ 우선순위 (주인님 2026-10-11: "빠르게 입력돼야 되는 우선순위") — 같은 호텔·같은 브랜드+메뉴로 **반복된 실패일수록 위로**
+  //   (한 번 답하면 여러 건이 한꺼번에 풀린다), 실주문은 최상단, 최근 7일은 가산. 점수는 카드에 '반복 N회'·'실주문' 배지로 보인다.
+  try{ const hk=r=>(r.hotel||r.addr_given||"").replace(/\s+/g,"").slice(0,14);
+    const mk=r=>{ const m=(r.menu||"").split("+")[0].replace(/\(.*$/,"").replace(/x\d+$/,"").trim(); return m?((r.brand||"")+"|"+m).replace(/\s+/g,""):""; };
+    const byH={}, byM={}, seen=new Set();
+    for(const r of f){ if(r.result!=="실패") continue; const h=hk(r), m=mk(r);
+      if(h&&!seen.has("h"+r.order_id+"|"+h)){ seen.add("h"+r.order_id+"|"+h); byH[h]=(byH[h]||0)+1; }
+      if(m&&!seen.has("m"+r.order_id+"|"+m)){ seen.add("m"+r.order_id+"|"+m); byM[m]=(byM[m]||0)+1; } }
+    const liveIds=new Set((typeof liveOrders!=="undefined"&&liveOrders||[]).map(o=>String(o.order_id||o.id||"")));
+    const cut7=Date.now()-7*86400000;
+    for(const r of reasons){ const h=hk(r), m=mk(r); r._rep=Math.max(h?(byH[h]||1):1, m?(byM[m]||1):1); r._live=liveIds.has(String(r.order_id));
+      r._recent=!!(r.created_at&&new Date(r.created_at).getTime()>cut7); r._prio=(r._live?100:0)+(r._rep-1)*3+(r._recent?2:0); }
+    reasons.sort((a,b)=>(b._prio-a._prio)||(Number(b.id)-Number(a.id)));
+  }catch(e){}
   // 주인님 2026-10-07: 교정 반영 탭에 그날 교정 들어간 숫자를 실시간(60초 갱신)으로, 빨간 배경 배지
   try{ const t0=todayStr(); $("#nLearned").textContent=latestPerOrder(f.filter(r=>(r.human_reason_cat||r.human_action)&&r.human_at&&localDay(new Date(r.human_at))===t0)).filter(r=>noteKind(r)!=="none").length; }catch(e){}
   $("#nTodo").textContent=todo.length; try{ $("#nLive").textContent=liveOrders.filter(r=>minePc(r.pc_id)&&liveDayOf(r)===opDay()&&!["사진전송","사진없음"].includes(r.state)).length; }catch(e){} $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
@@ -769,7 +783,8 @@ function cardTodo(r){ const id=Number(r.id); return `<div class="card" id="c-${i
     <input id="note-${id}" type="text" placeholder="(선택) OO점에서 됨 / 검색은 XX로">
   </div>
   <div class="row">${reasonSelect(id, r.suggest_cat, "fnote-"+id)}<input id="fnote-${id}" type="text" placeholder="${esc(noteHint(r.suggest_cat))}"><button class="bad" onclick="fail(${id})">주문실패</button></div>${hintLine("fnote-"+id, r.suggest_cat)}</div>`}
-function cardReason(r){ const id=Number(r.id); return `<div class="card" id="c-${id}">${head(r)}<div class="row">${reasonSelect(id, r.suggest_cat, "fnote-"+id)}<input id="fnote-${id}" type="text" placeholder="${esc(noteHint(r.suggest_cat))}"><button class="ok" onclick="saveReason(${id})">저장</button></div>${hintLine("fnote-"+id, r.suggest_cat)}</div>`}
+function cardReason(r){ const id=Number(r.id); const prio=(r._live?`<span class="tag" style="background:#c0392b;color:#fff">실주문 — 먼저</span> `:"")+(r._rep>1?`<span class="tag" style="background:#8e5a00;color:#fff">반복 ${r._rep}회 — 답하면 ${r._rep}건 해결</span> `:"")+(r._recent&&!r._live?`<span class="tag">최근 7일</span> `:"");
+  return `<div class="card" id="c-${id}">${prio?`<div class="small" style="margin-bottom:6px">${prio}</div>`:""}${head(r)}<div class="row">${reasonSelect(id, r.suggest_cat, "fnote-"+id)}<input id="fnote-${id}" type="text" placeholder="${esc(noteHint(r.suggest_cat))}"><button class="ok" onclick="saveReason(${id})">저장</button></div>${hintLine("fnote-"+id, r.suggest_cat)}</div>`}
 // ★ 오늘 현황 줄 (사장님 2026-10-05: "실패 사유 입력·미답변 질문 탭에는 그날그날 오늘 몇 개 했는지") — 오늘 00:00 이후 입력만, 담당자별로
 function todayBar(kind, f){
   const t0=todayStr(); const isToday=iso=> iso && localDay(new Date(iso))===t0;
