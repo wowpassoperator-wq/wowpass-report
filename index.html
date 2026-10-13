@@ -506,9 +506,12 @@ function opDay(){ return localDay(new Date(Date.now()-4*3600*1000)); }   // 영�
 // 실주문 탭 — 주문별 단계 시각(시:분:초)과 지금 상태 (주인님 2026-10-06: "어디까지 됐는지 한눈에")
 function hms(iso){ if(!iso) return ""; const d=new Date(iso); return isNaN(d)?"":String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+":"+String(d.getSeconds()).padStart(2,"0"); }
 const LIVE_COLOR = {"사진전송":"var(--ok)","배달완료":"#9fd0ff","배달중":"#ffd166","매핑됨":"#ffd166","결제됨":"#ffd166","결제직전":"#ffd166","진행중":"#ffd166","사진없음":"var(--bad)","멈춤":"var(--bad)"};
+// 허브에 금액 칸이 없는 동안 발송기가 메뉴 끝에 싣는 표식 '[[won:받은:결제]]' 을 떼어 금액 값으로 옮긴다(2026-10-13 — SQL 없이도 금액 표시).
+function liveWon(r){ const m=/\s*\[\[won:(\d*):(\d*)\]\]\s*$/.exec(r.menu||""); if(!m) return r;
+  return Object.assign({}, r, {menu:(r.menu||"").slice(0,m.index), received_won:r.received_won!=null?r.received_won:(m[1]===""?null:Number(m[1])), pay_won:r.pay_won!=null?r.pay_won:(m[2]===""?null:Number(m[2]))}); }
 function liveTab(){
   const day=liveDay||opDay();
-  const rows=liveOrders.filter(r=>minePc(r.pc_id)&&liveDayOf(r)===day);
+  const rows=liveOrders.filter(r=>minePc(r.pc_id)&&liveDayOf(r)===day).map(liveWon);
   const cnt={}; rows.forEach(r=>cnt[r.state]=(cnt[r.state]||0)+1);
   const step=(t,label)=>t?`<div class="nw"><span class="muted small">${label}</span> <b>${hms(t)}</b></div>`:`<div class="nw muted small">${label} —</div>`;
   const gap=(a,b)=>{ if(!a||!b) return ""; const s=Math.round((new Date(b)-new Date(a))/1000); return s>=0?` <span class="muted small">(+${s>=60?Math.floor(s/60)+"분 ":""}${s%60}초)</span>`:""; };
