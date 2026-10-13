@@ -515,10 +515,15 @@ function liveTab(){
   let html=`<div class="row" style="margin:0 0 10px"><b style="font-size:16px">${esc(day)} 실주문 ${rows.length}건</b> <input type="date" id="liveDay" value="${esc(day)}" max="${opDay()}" style="padding:4px 8px"> <button class="small" id="liveToday">오늘</button> <button class="small" id="liveAutoBtn" style="${LIVE_AUTO?"background:#2a5c3a":""}" title="와우패스 어드민처럼 3초마다 이 탭만 새로 읽습니다">${LIVE_AUTO?"⏸ 자동 갱신 중지":"▶ 자동 갱신(3초)"}</button> ${Object.entries(cnt).map(([k,v])=>`<span class="tag" style="border-color:${LIVE_COLOR[k]||"inherit"}">${esc(k)} ${v}</span>`).join(" ")} <span class="muted small">· ${LIVE_AUTO?"3초마다 자동 갱신 중":"60초마다 PC 가 올림"} · 시각은 초 단위</span></div>`;
   if(liveErr) html+=`<div class="card"><b>실주문 표를 못 읽음</b> <span class="small muted">${esc(liveErr)}</span><div class="small muted">허브에 live_orders 표가 없으면 Supabase SQL Editor 에서 scripts/hub/hub_schema_live.sql 을 실행해야 합니다.</div></div>`;
   if(!rows.length) return html+`<div class="empty">${esc(day)} 에 AI 가 진행한 실주문이 없습니다</div>`;
-  html+=`<div class="card" style="overflow-x:auto"><table class="wide"><tr><th>와우패스</th><th>브랜드 · 매장</th><th>숙소</th><th>메뉴</th><th>배민 주문번호</th><th>시작</th><th>결제</th><th>어드민 매핑</th><th>배달 중</th><th>배달 완료</th><th>사진</th><th>상태</th></tr>`;
+  // ★ 2026-10-13 주인님: "실주문 탭에 와우패스 결제 금액도 표시" — 받은금액(와우패스 결제)과 배민 결제액(상품권). 허브에 칸이 없으면(SQL 미실행) 칸 자체를 숨긴다.
+  const hasWon=rows.some(r=>r.received_won!=null||r.pay_won!=null);
+  const won=v=>(v==null||v==="")?"—":Number(v).toLocaleString("ko-KR")+"원";
+  const wonCell=r=>{ if(!hasWon) return ""; const rv=r.received_won, pv=r.pay_won; const diff=(rv!=null&&pv!=null)?pv-rv:null;
+    return `<td class="nw"><b>${won(rv)}</b>${pv!=null?`<div class="small muted">배민 ${won(pv)}${diff?` <span style="color:${diff>0?"var(--bad)":"var(--ok)"}">(${diff>0?"+":""}${diff.toLocaleString("ko-KR")})</span>`:""}</div>`:""}</td>`; };
+  html+=`<div class="card" style="overflow-x:auto"><table class="wide"><tr><th>와우패스</th><th>브랜드 · 매장</th><th>숙소</th><th>메뉴</th>${hasWon?`<th title="와우패스에서 받은 금액 · 아래 줄은 배민 주문서 결제금액(상품권), 괄호는 차이">와우패스 결제</th>`:""}<th>배민 주문번호</th><th>시작</th><th>결제</th><th>어드민 매핑</th><th>배달 중</th><th>배달 완료</th><th>사진</th><th>상태</th></tr>`;
   for(const r of rows){
     const st=r.state||""; const note=[r.manual?"담당자 직접 주문":"", r.stop_reason||"", r.photo_note||""].filter(Boolean).join(" · ");
-    html+=`<tr><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand||"")}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel||"")}</td><td class="small">${esc(r.menu||"")}</td><td class="nw small">${esc(r.baemin_no||"")}</td>
+    html+=`<tr><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand||"")}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel||"")}</td><td class="small">${esc(r.menu||"")}</td>${wonCell(r)}<td class="nw small">${esc(r.baemin_no||"")}</td>
       <td class="nw">${hms(r.started_at)||"—"}</td><td class="nw">${hms(r.paid_at)||"—"}${gap(r.started_at,r.paid_at)}</td><td class="nw">${hms(r.mapped_at)||"—"}${gap(r.paid_at,r.mapped_at)}</td><td class="nw">${hms(r.moved_at)||"—"}</td><td class="nw">${hms(r.done_at)||"—"}${gap(r.paid_at,r.done_at)}</td><td class="nw">${hms(r.photo_at)||"—"}${gap(r.done_at,r.photo_at)}</td>
       <td class="nw"><b style="color:${LIVE_COLOR[st]||"inherit"}">${esc(st)}</b>${note?`<div class="small muted" style="max-width:260px;white-space:normal">${esc(note)}</div>`:""}</td></tr>`;
   }
