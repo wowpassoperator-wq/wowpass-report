@@ -112,7 +112,7 @@ async function get(path, signal){ let out=[], lo=0; for(;;){ const r=await fetch
 async function patch(table, match, body){ const r=await fetch(HUB_URL+"/rest/v1/"+table+"?"+match,{method:"PATCH",headers:{...H,"Prefer":"return=representation"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(r.status+" "+await r.text()); const res=await r.json(); return Array.isArray(res)?res:[]; }
 // 개수만 (본문 0바이트): Range 0-0 + count=exact → Content-Range "0-0/1427"
 async function count(path, signal){ const r=await fetch(HUB_URL+"/rest/v1/"+path,{headers:{...H,"Range":"0-0","Prefer":"count=exact"},signal}); if(!r.ok) throw new Error(r.status+" "+await r.text()); const cr=r.headers.get("Content-Range")||""; const m=/\/(\d+)$/.exec(cr); return m?+m[1]:0; }
-function errText(e){ if(e&&e.name==="AbortError") return "허브 응답 없음(15초) — 네트워크 확인"; const m=/^(\d{3})/.exec((e&&e.message)||""); if(m){ const c=+m[1]; if(c===401||c===403) return "권한 오류("+c+") — 키/정책 확인"; if(c>=500) return "허브 서버 오류("+c+")"; return "허브 오류("+c+")"; } return (navigator.onLine===false)?"오프라인 — 네트워크 확인":"연결 실패: "+((e&&e.message)||e); }
+function errText(e){ if(e&&e.name==="AbortError") return "허브 응답 없음(15초) — 네트워크 확인"; const m=/^(\d{3})/.exec((e&&e.message)||""); if(m){ const c=+m[1]; if(c===401||c===403) return (typeof AUTH!=="undefined"&&AUTH)?"권한 오류("+c+") — 계정 권한·정책 확인(관리자에게 문의)":"로그인이 필요합니다 — 10/16 부터 로그인한 담당자만 볼 수 있습니다(공개 키 차단)"; if(c>=500) return "허브 서버 오류("+c+")"; return "허브 오류("+c+")"; } return (navigator.onLine===false)?"오프라인 — 네트워크 확인":"연결 실패: "+((e&&e.message)||e); }
 
 // ── 사유 분류 (PROCESS §2 표 그대로) ──
 const REASONS = [
@@ -638,7 +638,7 @@ function render(auto){
   // 다시 그려도 입력값은 살린다 (id 기준)
   const saved=new Map([...m.querySelectorAll("input,textarea,select")].filter(el=>dirty.has(el.id)).map(el=>[el.id,el.value]));
   let html="";
-  if(!loadedOnce){ m.innerHTML=`<div class="banner"><b>허브에 연결하지 못했습니다</b> — ${esc(lastErr||"불러오는 중…")}<br><span class="small">네트워크(VPN 불필요)·주소를 확인하고 [새로고침]</span></div>`; return; }
+  if(!loadedOnce){ m.innerHTML=`<div class="banner"><b>허브에 연결하지 못했습니다</b> — ${esc(lastErr||"불러오는 중…")}<br><span class="small">${/로그인이 필요/.test(lastErr||"")?"오른쪽 위 [로그인] 을 눌러 주세요":"네트워크(VPN 불필요)·주소를 확인하고 [새로고침]"}</span></div>`; return; }
   if(lastErr) html+=`<div class="banner">허브 오류: ${esc(lastErr)} · 아래는 <b>${hhmm(lastOkAt)}</b> 기준 데이터입니다 — 버튼은 저장이 안 될 수 있음</div>`;
   if(needHist && !hist.length) html+=`<div class="card muted small">최근 ${WINDOW_DAYS}일 데이터를 불러오는 중… (이 탭은 열 때만 받습니다)</div>`;
   if(tab==="todo"){ ensureDetails(todo.slice(0,200).map(r=>r.id));
