@@ -479,7 +479,8 @@ let liveOrders=[], liveErr=null, liveDay="", learnedDay="";   // liveDay: 실주
 //   60초 폴링으로 받은 live_orders 의 state 가 바뀐 주문(오늘 영업일·내 PC)을 브라우저 음성(ko-KR)으로 읽는다. 첫 로드는 기준만 잡고 조용히.
 let VOICE_ON=true; try{ VOICE_ON=(localStorage.getItem("voiceOn")??"1")==="1"; }catch(e){}
 let prevLive=null;
-const LIVE_SAY={"진행중":"주문 시작","결제직전":"결제 직전","결제됨":"결제 완료","매핑됨":"접수 완료","배달중":"배달 중","배달완료":"배달 완료","사진전송":"사진 전송 완료","사진없음":"사진 없음, 확인 필요","멈춤":"중단, 확인 필요"};
+// 2026-10-16 D3: '테스트'(호텔명·닉네임 test 주문 — 무시)·'실패처리'(매장 없음 → 어드민 주문 실패 ADDRESS) — 글자는 scripts/hub/hub_shipper.py live_state 와 똑같아야 한다
+const LIVE_SAY={"진행중":"주문 시작","결제직전":"결제 직전","결제됨":"결제 완료","매핑됨":"접수 완료","배달중":"배달 중","배달완료":"배달 완료","사진전송":"사진 전송 완료","사진없음":"사진 없음, 확인 필요","멈춤":"중단, 확인 필요","테스트":"테스트 주문, 무시합니다","실패처리":"매장 없음, 주문 실패 처리됨"};
 function speak(t){ if(!VOICE_ON) return; try{ const u=new SpeechSynthesisUtterance(t); u.lang="ko-KR"; u.rate=1.0; speechSynthesis.speak(u); }catch(e){} }
 // ★ 실주문 탭 자동 갱신 (주인님 2026-10-09 19:17: "와우패스 어드민처럼 3초 단위 자동 갱신 / 자동 갱신 중지 버튼") — live_orders 표만 3초마다 읽어 이 탭만 다시 그린다.
 let LIVE_AUTO=false; try{ LIVE_AUTO=localStorage.getItem("liveAuto")==="1"; }catch(e){}
@@ -508,7 +509,7 @@ function liveDayOf(r){ return r.started_at? localDay(new Date(new Date(r.started
 function opDay(){ return localDay(new Date(Date.now()-4*3600*1000)); }   // 영업일: 새벽 4시 전은 어제(배달·사진이 자정을 넘긴다)
 // 실주문 탭 — 주문별 단계 시각(시:분:초)과 지금 상태 (주인님 2026-10-06: "어디까지 됐는지 한눈에")
 function hms(iso){ if(!iso) return ""; const d=new Date(iso); return isNaN(d)?"":String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+":"+String(d.getSeconds()).padStart(2,"0"); }
-const LIVE_COLOR = {"사진전송":"var(--ok)","배달완료":"#9fd0ff","배달중":"#ffd166","매핑됨":"#ffd166","결제됨":"#ffd166","결제직전":"#ffd166","진행중":"#ffd166","사진없음":"var(--bad)","멈춤":"var(--bad)"};
+const LIVE_COLOR = {"사진전송":"var(--ok)","배달완료":"#9fd0ff","배달중":"#ffd166","매핑됨":"#ffd166","결제됨":"#ffd166","결제직전":"#ffd166","진행중":"#ffd166","사진없음":"var(--bad)","멈춤":"var(--bad)","테스트":"var(--dim)","실패처리":"#9fd0ff"};   // 테스트는 흐리게(할 일 아님), 실패처리는 끝난 일(배달완료와 같은 파랑)
 // 허브에 금액 칸이 없는 동안 발송기가 메뉴 끝에 싣는 표식 '[[won:받은:결제]]' 을 떼어 금액 값으로 옮긴다(2026-10-13 — SQL 없이도 금액 표시).
 function liveWon(r){ const m=/\s*\[\[won:(\d*):(\d*)\]\]\s*$/.exec(r.menu||""); if(!m) return r;
   return Object.assign({}, r, {menu:(r.menu||"").slice(0,m.index), received_won:r.received_won!=null?r.received_won:(m[1]===""?null:Number(m[1])), pay_won:r.pay_won!=null?r.pay_won:(m[2]===""?null:Number(m[2]))}); }
@@ -524,11 +525,14 @@ function liveTab(){
   // ★ 2026-10-13 주인님: "실주문 탭에 와우패스 결제 금액도 표시" — 받은금액(와우패스 결제)과 배민 결제액(상품권). 허브에 칸이 없으면(SQL 미실행) 칸 자체를 숨긴다.
   const hasWon=rows.some(r=>r.received_won!=null||r.pay_won!=null);
   const won=v=>(v==null||v==="")?"—":Number(v).toLocaleString("ko-KR")+"원";
+  // 2026-10-16 D2: 결제됐는데 금액 짝이 없으면(발송기가 결제 ±10분 안 실행만 인정) '모름' — 다른 실행 금액을 결제액처럼 보이지 않게. 수기 주문은 비고 '선물함 OCR 필요' 로.
   const wonCell=r=>{ if(!hasWon) return ""; const rv=r.received_won, pv=r.pay_won; const diff=(rv!=null&&pv!=null)?pv-rv:null;
-    return `<td class="nw"><b>${won(rv)}</b>${pv!=null?`<div class="small muted">배민 ${won(pv)}${diff?` <span style="color:${diff>0?"var(--bad)":"var(--ok)"}">(${diff>0?"+":""}${diff.toLocaleString("ko-KR")})</span>`:""}</div>`:""}</td>`; };
+    const unknown=(pv==null && !r.manual && r.paid_at)?`<div class="small muted">배민 모름</div>`:"";
+    return `<td class="nw"><b>${won(rv)}</b>${pv!=null?`<div class="small muted">배민 ${won(pv)}${diff?` <span style="color:${diff>0?"var(--bad)":"var(--ok)"}">(${diff>0?"+":""}${diff.toLocaleString("ko-KR")})</span>`:""}</div>`:unknown}</td>`; };
   html+=`<div class="card" style="overflow-x:auto"><table class="wide"><tr><th>와우패스</th><th>브랜드 · 매장</th><th>숙소</th><th>메뉴</th>${hasWon?`<th title="와우패스에서 받은 금액 · 아래 줄은 배민 주문서 결제금액(상품권), 괄호는 차이">와우패스 결제</th>`:""}<th>배민 주문번호</th><th>시작</th><th>결제</th><th>어드민 매핑</th><th>배달 중</th><th>배달 완료</th><th>사진</th><th>상태</th></tr>`;
   for(const r of rows){
-    const st=r.state||""; const note=[r.manual?"담당자 직접 주문":"", r.stop_reason||"", r.photo_note||""].filter(Boolean).join(" · ");
+    // 수기 주문(manual)은 발송기가 결제액을 비워 보낸다(정산 장부에 적히기 전엔 실제 결제액을 모른다) → 비고 '선물함 OCR 필요'(2026-10-16 D2, 47807·47809)
+    const st=r.state||""; const note=[r.manual?("담당자 직접 주문"+(r.pay_won==null&&(r.mapped_at||r.paid_at)?" · 선물함 OCR 필요":"")):"", r.stop_reason||"", r.photo_note||""].filter(Boolean).join(" · ");
     html+=`<tr><td class="nw"><b>${esc(r.order_id)}</b></td><td>${esc(r.brand||"")}${r.store?` · <b>${esc(r.store)}</b>`:""}</td><td class="small">${esc(r.hotel||"")}</td><td class="small">${esc(r.menu||"")}</td>${wonCell(r)}<td class="nw small">${esc(r.baemin_no||"")}</td>
       <td class="nw">${hms(r.started_at)||"—"}</td><td class="nw">${hms(r.paid_at)||"—"}${gap(r.started_at,r.paid_at)}</td><td class="nw">${hms(r.mapped_at)||"—"}${gap(r.paid_at,r.mapped_at)}</td><td class="nw">${hms(r.moved_at)||"—"}</td><td class="nw">${hms(r.done_at)||"—"}${gap(r.paid_at,r.done_at)}</td><td class="nw">${hms(r.photo_at)||"—"}${gap(r.done_at,r.photo_at)}</td>
       <td class="nw"><b style="color:${LIVE_COLOR[st]||"inherit"}">${esc(st)}</b>${note?`<div class="small muted" style="max-width:260px;white-space:normal">${esc(note)}</div>`:""}</td></tr>`;
@@ -609,7 +613,7 @@ function counts(){
   }catch(e){}
   // 주인님 2026-10-07: 교정 반영 탭에 그날 교정 들어간 숫자를 실시간(60초 갱신)으로, 빨간 배경 배지
   try{ const t0=todayStr(); $("#nLearned").textContent=latestPerOrder(f.filter(r=>(r.human_reason_cat||r.human_action)&&r.human_at&&localDay(new Date(r.human_at))===t0)).filter(r=>noteKind(r)!=="none").length; }catch(e){}
-  $("#nTodo").textContent=todo.length; try{ $("#nLive").textContent=liveOrders.filter(r=>minePc(r.pc_id)&&liveDayOf(r)===opDay()&&!["사진전송","사진없음"].includes(r.state)).length; }catch(e){} $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
+  $("#nTodo").textContent=todo.length; try{ $("#nLive").textContent=liveOrders.filter(r=>minePc(r.pc_id)&&liveDayOf(r)===opDay()&&!["사진전송","사진없음","테스트","실패처리"].includes(r.state)).length; }catch(e){} $("#nReasons").textContent=(hist.length? reasons.length : (nReasonsSrv??"…")); $("#nQ").textContent=qsLite.filter(q=>!q.answer).length;
   if(loadedOnce) notifyNew(todo);
   return {f,today,todo,reasons,latest};
 }
