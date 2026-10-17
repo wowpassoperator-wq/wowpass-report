@@ -89,6 +89,7 @@ input[type="date"]{color-scheme:dark;}   /* 달력 아이콘이 검게 나와 �
   <input id="lgPw2" type="password" placeholder="새 비밀번호 확인" autocomplete="new-password" style="width:100%;font-size:16px;padding:10px 12px;margin-bottom:10px;display:none">
   <div style="display:flex;gap:8px"><button class="ok" id="lgOk" style="flex:1;padding:10px">로그인</button><button id="lgCancel" style="padding:10px 14px">닫기</button></div>
   <div id="lgErr" class="small" style="color:#ffb3b3;margin-top:8px"></div>
+  <div id="lgLinks" class="small" style="margin-top:10px"><a href="#" id="lgReset" style="color:var(--dim)">비밀번호를 잊으셨나요? 재설정 메일 받기</a></div>
 </div></div>
 <script>
 // ── 허브 접속 (publishable 키 = Supabase 가 "공개해도 안전" 으로 명시한 공개용 키. 비밀키 아님) ──
@@ -204,14 +205,25 @@ function paintAuth(){ const box=$("#authBox"); if(!box) return;
   const vb=$("#voiceBtn"); if(vb) vb.onclick=()=>{ VOICE_ON=!VOICE_ON; try{localStorage.setItem("voiceOn",VOICE_ON?"1":"0")}catch(e){} vb.textContent=VOICE_ON?"🔊 음성 켬":"🔇 음성 끔"; if(VOICE_ON) speak("음성 알림을 켰습니다"); };
   const va=$("#viewAll"); if(va) va.onchange=()=>{ VIEWALL=va.checked; try{localStorage.setItem("viewall",VIEWALL?"1":"0")}catch(e){} render(false); }; }
 let lgMode="login";
+// ★ 2026-10-17 주인님: "비번 재설정 기능 버튼을 로그인 탭에" — reset 모드: 이메일만 받아 Supabase 재설정 메일을 보낸다(/auth/v1/recover).
+//   메일의 링크를 열면 이 페이지로 돌아오며 주소 뒤에 #access_token=…&type=recovery 가 붙는다 → 아래 시작 코드가 그 토큰으로 '비밀번호 변경' 창을 띄운다.
 function openLogin(mode){ lgMode=mode; $("#lgErr").textContent=""; $("#lgPw").value=""; $("#lgPw2").value="";
-  const pw=mode==="pw"; $("#lgTitle").textContent=pw?"비밀번호 변경":"로그인"; $("#lgEmail").style.display=pw?"none":""; $("#lgPw2").style.display=pw?"":"none";
-  $("#lgPw").placeholder=pw?"새 비밀번호 (8자 이상)":"비밀번호"; $("#lgOk").textContent=pw?"변경":"로그인";
-  $("#lgHelp").textContent=pw?"새 비밀번호를 두 번 적어 주세요.":"받은 이메일·비밀번호로 로그인하세요. 로그인하면 오늘의 코드가 보이고, 내 PC 것만 따로 볼 수 있습니다.";
+  const pw=mode==="pw", rs=mode==="reset";
+  $("#lgTitle").textContent=pw?"비밀번호 변경":rs?"비밀번호 재설정":"로그인";
+  $("#lgEmail").style.display=pw?"none":""; $("#lgPw").style.display=rs?"none":""; $("#lgPw2").style.display=pw?"":"none"; $("#lgLinks").style.display=(pw||rs)?"none":"";
+  $("#lgPw").placeholder=pw?"새 비밀번호 (8자 이상)":"비밀번호"; $("#lgOk").textContent=pw?"변경":rs?"재설정 메일 보내기":"로그인";
+  $("#lgHelp").textContent=pw?"새 비밀번호를 두 번 적어 주세요.":rs?"등록된 이메일을 적으면 재설정 링크를 메일로 보냅니다. 메일의 링크를 열면 이 화면에 새 비밀번호를 적는 창이 뜹니다(스팸함도 확인).":"받은 이메일·비밀번호로 로그인하세요. 로그인하면 오늘의 코드가 보이고, 내 PC 것만 따로 볼 수 있습니다.";
   $("#loginGate").style.display="grid"; setTimeout(()=>(pw?$("#lgPw"):$("#lgEmail")).focus(),50); }
+async function authGet(path, token){ const r=await fetch(HUB_URL+"/auth/v1/"+path,{headers:{"apikey":HUB_KEY,"Authorization":"Bearer "+token}}); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error_description||j.msg||j.message||("오류 "+r.status)); return j; }
+async function sendReset(em){ const r=await fetch(HUB_URL+"/auth/v1/recover?redirect_to="+encodeURIComponent(location.origin+location.pathname),{method:"POST",headers:{"apikey":HUB_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:em})});
+  if(r.ok) return; const j=await r.json().catch(()=>({})); if(r.status===429) throw new Error("메일을 너무 자주 보냈습니다 — 잠시 뒤 다시 해 주세요"); throw new Error(j.error_description||j.msg||j.message||("오류 "+r.status)); }
 async function submitLogin(){ const err=m=>{$("#lgErr").textContent=m};
-  try{ if(lgMode==="pw"){ const p=$("#lgPw").value, p2=$("#lgPw2").value; if(p.length<8) return err("8자 이상으로 적어 주세요"); if(p!==p2) return err("두 칸이 다릅니다");
-      await refreshAuth(); await authPost("user",{password:p},AUTH.access_token); $("#loginGate").style.display="none"; toast("비밀번호를 바꿨습니다"); return; }
+  try{ if(lgMode==="reset"){ const em=($("#lgEmail").value||"").trim(); if(!em) return err("이메일을 적어 주세요");
+      await sendReset(em); $("#loginGate").style.display="none"; toast("재설정 메일을 보냈습니다 — 메일함(스팸함도)을 열어 링크를 눌러 주세요",true); return; }
+    if(lgMode==="pw"){ const p=$("#lgPw").value, p2=$("#lgPw2").value; if(p.length<8) return err("8자 이상으로 적어 주세요"); if(p!==p2) return err("두 칸이 다릅니다");
+      await refreshAuth(); await authPost("user",{password:p},AUTH.access_token); $("#loginGate").style.display="none"; toast("비밀번호를 바꿨습니다");
+      if(!ROLE){ $("#gate").style.display="none"; setInert(false); await loadProfile(); load(true); }   // 재설정 링크로 들어온 경우 — 이제 로그인된 상태
+      return; }
     const em=($("#lgEmail").value||"").trim(), p=$("#lgPw").value; if(!em||!p) return err("이메일과 비밀번호를 적어 주세요");
     saveAuth(await authPost("token?grant_type=password",{email:em,password:p})); $("#loginGate").style.display="none"; $("#gate").style.display="none"; setInert(false);
     await loadProfile(); load(true); toast("로그인했습니다 — "+me());
@@ -938,6 +950,16 @@ document.addEventListener("compositionstart",()=>composing=true); document.addEv
 $("#gateOk").onclick=commitGate; $("#gateName").addEventListener("keydown",e=>{ if(e.key==="Enter") commitGate(); });
 $("#meChange").onclick=showGate;
 $("#lgOk").onclick=submitLogin; $("#lgCancel").onclick=()=>{ $("#loginGate").style.display="none"; };
+$("#lgReset").onclick=e=>{ e.preventDefault(); openLogin("reset"); };
+// 재설정 메일의 링크로 돌아온 경우: 주소 뒤 #access_token=…&type=recovery — 그 토큰으로 '비밀번호 변경' 창을 바로 띄운다(10/17)
+try{ const hp=new URLSearchParams((location.hash||"").replace(/^#/,""));
+  if(hp.get("type")==="recovery" && hp.get("access_token")){
+    saveAuth({access_token:hp.get("access_token"),refresh_token:hp.get("refresh_token")||"",expires_in:+(hp.get("expires_in")||3600),user:{}});
+    history.replaceState(null,"",location.pathname+location.search);
+    authGet("user",AUTH.access_token).then(u=>{ AUTH.uid=u.id; AUTH.email=u.email; try{localStorage.setItem("auth",JSON.stringify(AUTH))}catch(e){} }).catch(()=>{});
+    setTimeout(()=>{ openLogin("pw"); toast("새 비밀번호를 정해 주세요"); },300);
+  } else if(hp.get("error")){ history.replaceState(null,"",location.pathname+location.search); setTimeout(()=>toast("재설정 링크 오류: "+decodeURIComponent((hp.get("error_description")||hp.get("error")).replace(/\+/g," "))+" — 다시 '재설정 메일 받기'",true),300); }
+}catch(e){}
 ["lgEmail","lgPw","lgPw2"].forEach(id=>$("#"+id).addEventListener("keydown",e=>{ if(e.key==="Enter") submitLogin(); }));
 paintAuth(); if(AUTH) loadProfile().then(()=>render(false));
 paintMe(); if(!ME && !AUTH) showGate();                       // 세션(이름) 없으면 먼저 받는다 — 데이터는 뒤에서 미리 불러온다
