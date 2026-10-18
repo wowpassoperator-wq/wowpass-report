@@ -183,9 +183,16 @@ async function refreshAuth(){ if(!AUTH||AUTH.expires_at-Date.now()>10*60000) ret
 async function loadProfile(){ if(!AUTH) return;
   try{ const op=await get("operators?select=name,role&user_id=eq."+AUTH.uid);
     if(!op.length){ toast("등록된 담당자가 아닙니다 — 관리자에게 문의",true); doLogout(true); return; }
-    ROLE=op[0].role; ME=op[0].name; try{localStorage.setItem("me",ME)}catch(e){}
+    ROLE=op[0].role; ME=(op[0].name||"").trim(); try{localStorage.setItem("me",ME)}catch(e){}
     const pr=await get("pairings?select=pc_id&user_id=eq."+AUTH.uid+"&day=eq."+todayStr()); MYPCS=pr.map(x=>x.pc_id); MYPC=MYPCS[0]||"";
   }catch(e){ toast("프로필 조회 실패: "+errText(e),true); }
+  paintMe(); paintAuth();
+  // ★ 2026-10-18 주인님: "로그인 최초에, 또는 로그인을 통해 이름을 바꿀 수 있게" — 이름이 비어 있으면(첫 로그인) 바로 이름 정하기 창.
+  if(AUTH && ROLE && !ME){ setTimeout(()=>{ openLogin("name"); toast("처음 로그인입니다 — 화면에 보일 이름을 정해 주세요"); },200); } }
+// 이름 저장: operators 표의 **내 줄**(user_id = 로그인 계정)만 — 서버 정책(operators self update)이 남의 줄은 막는다.
+async function saveMyName(name){ const upd=await patch("operators","user_id=eq."+enc(AUTH.uid),{name:name}); if(!upd.length) throw new Error("이름을 저장할 권한이 없습니다 — 관리자에게 문의(operators self update 정책)");
+  ME=name; try{localStorage.setItem("me",ME)}catch(e){}
+  for(const pc of MYPCS){ try{ await patch("pcs","pc_id=eq."+enc(pc),{monitor:ME}); }catch(e){} }   // 오늘 짝 맺은 PC 의 '지금 담당자' 표시도 같이
   paintMe(); paintAuth(); }
 function doLogout(silent){ AUTH=null; ROLE=""; MYPCS=[]; VIEWALL=false; try{localStorage.removeItem("auth");localStorage.removeItem("viewall")}catch(e){} setAuthHeader(); paintAuth(); if(!silent) toast("로그아웃했습니다"); load(true); }
 const isMgr=()=>ROLE==="manager";
@@ -201,25 +208,28 @@ function paintAuth(){ const box=$("#authBox"); if(!box) return;
     +`<button id="codeBtn" class="small" style="padding:2px 8px" title="내 PC 의 Claude 에게 알려줄 오늘의 코드">오늘 코드</button>`
     +`<button id="voiceBtn" class="small" style="padding:2px 8px" title="실주문 상태가 바뀌면(접수 완료·배달 중·배달 완료·사진 전송) 주문번호와 함께 소리로 읽어 줍니다">${VOICE_ON?"🔊 음성 켬":"🔇 음성 끔"}</button>`
     +(isMgr()?`<label class="small" style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" id="viewAll" ${VIEWALL?"checked":""}>전체 보기</label>`:"")
-    +`<button id="pwBtn" class="small" style="padding:2px 8px">비밀번호</button><button id="outBtn" class="small" style="padding:2px 8px">로그아웃</button>`;
-  $("#codeBtn").onclick=showPairCode; $("#pwBtn").onclick=()=>openLogin("pw"); $("#outBtn").onclick=()=>doLogout(false);
+    +`<button id="nameBtn" class="small" style="padding:2px 8px" title="화면·기록에 보일 내 이름">이름</button><button id="pwBtn" class="small" style="padding:2px 8px">비밀번호</button><button id="outBtn" class="small" style="padding:2px 8px">로그아웃</button>`;
+  $("#codeBtn").onclick=showPairCode; $("#pwBtn").onclick=()=>openLogin("pw"); $("#nameBtn").onclick=()=>openLogin("name"); $("#outBtn").onclick=()=>doLogout(false);
   const vb=$("#voiceBtn"); if(vb) vb.onclick=()=>{ VOICE_ON=!VOICE_ON; try{localStorage.setItem("voiceOn",VOICE_ON?"1":"0")}catch(e){} vb.textContent=VOICE_ON?"🔊 음성 켬":"🔇 음성 끔"; if(VOICE_ON) speak("음성 알림을 켰습니다"); };
   const va=$("#viewAll"); if(va) va.onchange=()=>{ VIEWALL=va.checked; try{localStorage.setItem("viewall",VIEWALL?"1":"0")}catch(e){} render(false); }; }
 let lgMode="login";
 // ★ 2026-10-17 주인님: "비번 재설정 기능 버튼을 로그인 탭에" — reset 모드: 이메일만 받아 Supabase 재설정 메일을 보낸다(/auth/v1/recover).
 //   메일의 링크를 열면 이 페이지로 돌아오며 주소 뒤에 #access_token=…&type=recovery 가 붙는다 → 아래 시작 코드가 그 토큰으로 '비밀번호 변경' 창을 띄운다.
 function openLogin(mode){ lgMode=mode; $("#lgErr").textContent=""; $("#lgPw").value=""; $("#lgPw2").value="";
-  const pw=mode==="pw", rs=mode==="reset";
-  $("#lgTitle").textContent=pw?"비밀번호 변경":rs?"비밀번호 재설정":"로그인";
-  $("#lgEmail").style.display=pw?"none":""; $("#lgPw").style.display=rs?"none":""; $("#lgPw2").style.display=pw?"":"none"; $("#lgLinks").style.display=(pw||rs)?"none":"";
-  $("#lgPw").placeholder=pw?"새 비밀번호 (8자 이상)":"비밀번호"; $("#lgOk").textContent=pw?"변경":rs?"재설정 메일 보내기":"로그인";
-  $("#lgHelp").textContent=pw?"새 비밀번호를 두 번 적어 주세요.":rs?"등록된 이메일을 적으면 재설정 링크를 메일로 보냅니다. 메일의 링크를 열면 이 화면에 새 비밀번호를 적는 창이 뜹니다(스팸함도 확인).":"받은 이메일·비밀번호로 로그인하세요. 로그인하면 오늘의 코드가 보이고, 내 PC 것만 따로 볼 수 있습니다.";
+  const pw=mode==="pw", rs=mode==="reset", nm=mode==="name";
+  $("#lgTitle").textContent=pw?"비밀번호 변경":rs?"비밀번호 재설정":nm?"내 이름":"로그인";
+  const em=$("#lgEmail"); em.type=nm?"text":"email"; em.placeholder=nm?"화면에 보일 이름 (예: 김수정)":"이메일"; em.value=nm?(ME||""):em.value;
+  em.style.display=pw?"none":""; $("#lgPw").style.display=(rs||nm)?"none":""; $("#lgPw2").style.display=pw?"":"none"; $("#lgLinks").style.display=(pw||rs||nm)?"none":"";
+  $("#lgPw").placeholder=pw?"새 비밀번호 (8자 이상)":"비밀번호"; $("#lgOk").textContent=pw?"변경":rs?"재설정 메일 보내기":nm?"저장":"로그인";
+  $("#lgHelp").textContent=pw?"새 비밀번호를 두 번 적어 주세요.":rs?"등록된 이메일을 적으면 재설정 링크를 메일로 보냅니다. 메일의 링크를 열면 이 화면에 새 비밀번호를 적는 창이 뜹니다(스팸함도 확인).":nm?"이 계정으로 입력한 주문완료·실패 사유·답에 이 이름이 찍힙니다. 언제든 다시 바꿀 수 있습니다.":"받은 이메일·비밀번호로 로그인하세요. 로그인하면 오늘의 코드가 보이고, 내 PC 것만 따로 볼 수 있습니다.";
   $("#loginGate").style.display="grid"; setTimeout(()=>(pw?$("#lgPw"):$("#lgEmail")).focus(),50); }
 async function authGet(path, token){ const r=await fetch(HUB_URL+"/auth/v1/"+path,{headers:{"apikey":HUB_KEY,"Authorization":"Bearer "+token}}); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error_description||j.msg||j.message||("오류 "+r.status)); return j; }
 async function sendReset(em){ const r=await fetch(HUB_URL+"/auth/v1/recover?redirect_to="+encodeURIComponent(location.origin+location.pathname),{method:"POST",headers:{"apikey":HUB_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:em})});
   if(r.ok) return; const j=await r.json().catch(()=>({})); if(r.status===429) throw new Error("메일을 너무 자주 보냈습니다 — 잠시 뒤 다시 해 주세요"); throw new Error(j.error_description||j.msg||j.message||("오류 "+r.status)); }
 async function submitLogin(){ const err=m=>{$("#lgErr").textContent=m};
-  try{ if(lgMode==="reset"){ const em=($("#lgEmail").value||"").trim(); if(!em) return err("이메일을 적어 주세요");
+  try{ if(lgMode==="name"){ const nm=($("#lgEmail").value||"").trim(); if(nm.length<1||nm.length>20) return err("1~20자로 적어 주세요"); if(!AUTH) return err("로그인이 필요합니다");
+      await refreshAuth(); await saveMyName(nm); $("#loginGate").style.display="none"; toast("이름을 '"+nm+"' 으로 저장했습니다"); load(false); return; }
+    if(lgMode==="reset"){ const em=($("#lgEmail").value||"").trim(); if(!em) return err("이메일을 적어 주세요");
       await sendReset(em); $("#loginGate").style.display="none"; toast("재설정 메일을 보냈습니다 — 메일함(스팸함도)을 열어 링크를 눌러 주세요",true); return; }
     if(lgMode==="pw"){ const p=$("#lgPw").value, p2=$("#lgPw2").value; if(p.length<8) return err("8자 이상으로 적어 주세요"); if(p!==p2) return err("두 칸이 다릅니다");
       await refreshAuth(); await authPost("user",{password:p},AUTH.access_token); $("#loginGate").style.display="none"; toast("비밀번호를 바꿨습니다");
